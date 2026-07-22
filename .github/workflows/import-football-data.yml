@@ -1,0 +1,41 @@
+name: Import football-data CSV
+
+on:
+  workflow_dispatch:
+    inputs:
+      csv_url:
+        description: Direct football-data.co.uk CSV URL
+        required: true
+      season:
+        description: Season label, e.g. 2025-26
+        required: true
+      league_name:
+        description: Full league name
+        required: false
+        default: English Premier League
+  schedule:
+    - cron: '17 */12 * * *'
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call private importer
+        env:
+          API_URL: ${{ secrets.BETYNZ_API_URL }}
+          ADMIN_TOKEN: ${{ secrets.BETYNZ_ADMIN_IMPORT_TOKEN }}
+          DEFAULT_CSV_URL: ${{ secrets.FOOTBALL_DATA_E0_CURRENT_URL }}
+          DEFAULT_SEASON: ${{ secrets.FOOTBALL_DATA_E0_CURRENT_SEASON }}
+        run: |
+          CSV_URL="${{ inputs.csv_url }}"
+          SEASON="${{ inputs.season }}"
+          LEAGUE_NAME="${{ inputs.league_name }}"
+          [ -z "$CSV_URL" ] && CSV_URL="$DEFAULT_CSV_URL"
+          [ -z "$SEASON" ] && SEASON="$DEFAULT_SEASON"
+          [ -z "$LEAGUE_NAME" ] && LEAGUE_NAME="English Premier League"
+          test -n "$API_URL" && test -n "$ADMIN_TOKEN" && test -n "$CSV_URL" && test -n "$SEASON"
+          curl --fail --silent --show-error \
+            -X POST "$API_URL/api/v1/admin/import" \
+            -H "content-type: application/json" \
+            -H "x-admin-token: $ADMIN_TOKEN" \
+            --data "{\"url\":\"$CSV_URL\",\"season\":\"$SEASON\",\"leagueName\":\"$LEAGUE_NAME\"}"

@@ -1,0 +1,30 @@
+export type NormalizedMatch = {
+  id: string;
+  leagueCode: string;
+  leagueName: string;
+  season: string;
+  date: string;
+  time?: string;
+  homeTeam: string;
+  awayTeam: string;
+  homeGoals: number;
+  awayGoals: number;
+  halfTimeHomeGoals?: number;
+  halfTimeAwayGoals?: number;
+  result: 'H' | 'D' | 'A';
+  stats?: Record<string, number | null>;
+  odds: {
+    openingHome?: number;
+    openingDraw?: number;
+    openingAway?: number;
+    closingHome?: number;
+    closingDraw?: number;
+    closingAway?: number;
+    openingOver25?: number;
+    openingUnder25?: number;
+    closingOver25?: number;
+    closingUnder25?: number;
+    asianLine?: number;
+    closingAsianLine?: number;
+  };
+};

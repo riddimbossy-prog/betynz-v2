@@ -1,0 +1,15 @@
+{
+  "name": "betynz-fresh-start",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": ["apps/web", "apps/api"],
+  "scripts": {
+    "dev": "concurrently -n API,WEB -c auto \"npm run dev -w apps/api\" \"npm run dev -w apps/web\"",
+    "build": "npm run build -w apps/api && npm run build -w apps/web",
+    "start": "npm run start -w apps/api",
+    "import:local": "npm run import:local -w apps/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
