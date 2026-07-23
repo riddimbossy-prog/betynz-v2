@@ -1,17 +1,27 @@
-# Betynz Fresh Start v1.0
+# Betynz Chronos Fusion v2.1
 
-Fresh black/charcoal and toned-orange Betynz UI, responsive down to 320px and suitable for Z Fold screens, plus a private football-data CSV API starter.
+Production-ready Betynz rebuild for **today plus the next five days**.
 
-## Included
+## What this version adds
 
-- New Betynz UI: Overview, Chronos Lab, Olympian engines, historical board and Analysis List
-- React + Vite + TypeScript frontend
-- Express + TypeScript private API
-- Football-Data CSV normalizer
-- Supabase schema and secure server-side importer
-- Demo fallback generated from the two uploaded EPL files
-- GitHub Action for scheduled imports
-- Render backend configuration
-- GitHub fresh-start instructions
+- Chronos Fusion historical-odds engine
+- Four-engine approval: Chronos, Athena, Zeus and Leonidas
+- One best market per fixture; weak matches return no pick
+- Low-odds upgrade rule: selections below 1.19 must pass a stricter related market
+- Daily Banker section with a maximum of the top three strict picks
+- Simple-English statistical explanations for every prediction
+- League profile, form, strength, home/away splits, table position and late-season pressure
+- API-Football fixture and odds synchronization every four hours
+- Automatic win/loss/void settlement when new result CSVs are imported
+- Responsive desktop, mobile, tablet and 320px/Z Fold interface
+- PWA manifest, install prompt, icons and a network-first service worker
 
-Read `docs/SETUP.md` first.
+## Main endpoints
+
+- `GET /api/v1/predictions`
+- `GET /api/v1/bankers?date=YYYY-MM-DD`
+- `GET /api/v1/upcoming-fixtures`
+- `POST /api/v1/admin/sync-upcoming`
+- Existing historical endpoints remain available.
+
+Start with `docs/UPGRADE_TO_V2_1.md`.

@@ -1,16 +1,14 @@
 services:
   - type: web
-    name: betynz-api
+    name: betynz-v2
     runtime: node
     rootDir: .
-    buildCommand: npm ci && npm run build -w apps/api
+    buildCommand: npm install && npm run build -w apps/api
     startCommand: npm run start -w apps/api
     healthCheckPath: /api/v1/health
     envVars:
       - key: NODE_VERSION
         value: 22
-      - key: PORT
-        value: 8787
       - key: CORS_ORIGINS
         value: https://betynz.com,https://www.betynz.com
       - key: SUPABASE_URL
@@ -19,3 +17,15 @@ services:
         sync: false
       - key: ADMIN_IMPORT_TOKEN
         generateValue: true
+      - key: API_FOOTBALL_KEY
+        sync: false
+      - key: API_FOOTBALL_BASE_URL
+        value: https://v3.football.api-sports.io
+      - key: PREDICTION_DAYS
+        value: 6
+      - key: PREDICTION_TIMEZONE
+        value: Africa/Accra
+      - key: API_FOOTBALL_LEAGUE_IDS
+        sync: false
+      - key: API_FOOTBALL_SEASON
+        sync: false

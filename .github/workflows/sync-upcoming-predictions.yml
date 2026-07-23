@@ -1,0 +1,27 @@
+name: Sync upcoming Betynz predictions
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 */4 * * *'
+
+concurrency:
+  group: betynz-upcoming-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync today plus next five days
+        env:
+          API_URL: ${{ secrets.BETYNZ_API_URL }}
+          ADMIN_TOKEN: ${{ secrets.BETYNZ_ADMIN_IMPORT_TOKEN }}
+        run: |
+          test -n "$API_URL" && test -n "$ADMIN_TOKEN"
+          curl --fail --silent --show-error \
+            --retry 2 --retry-delay 15 \
+            -X POST "$API_URL/api/v1/admin/sync-upcoming" \
+            -H "content-type: application/json" \
+            -H "x-admin-token: $ADMIN_TOKEN" \
+            --data '{}'

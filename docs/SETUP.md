@@ -1,6 +1,8 @@
-# Betynz Fresh Start setup
+# Betynz Chronos Fusion v2.1 setup
 
-## 1. Run locally
+For the existing live Betynz deployment, use `UPGRADE_TO_V2_1.md`.
+
+## Local development
 
 ```bash
 cp .env.example .env
@@ -9,41 +11,65 @@ npm run dev
 ```
 
 - Website: `http://localhost:5173`
-- API health: `http://localhost:8787/api/v1/health`
+- API: `http://localhost:8787`
+- Health: `http://localhost:8787/api/v1/health`
 
-The API automatically uses bundled demo data until Supabase variables are configured.
+## Database order
 
-## 2. Create the database
+Run both migrations once, in order:
 
-1. Open Supabase SQL Editor.
-2. Run `supabase/migrations/001_schema.sql`.
-3. Copy `.env.example` to `.env`.
-4. Add `SUPABASE_URL` and the server-only `SUPABASE_SERVICE_ROLE_KEY`.
-5. Never put the service-role key in the frontend or GitHub source.
+```text
+supabase/migrations/001_schema.sql
+supabase/migrations/002_prediction_engine.sql
+```
 
-## 3. Import the two uploaded EPL seasons
+Migration 001 stores settled historical results. Migration 002 stores upcoming fixtures and final predictions.
+
+## Render API
+
+Build command:
 
 ```bash
-npm run import:local -- --file="/path/to/E0 (1).csv" --season=2024-25 --leagueName="English Premier League"
-npm run import:local -- --file="/path/to/E0.csv" --season=2025-26 --leagueName="English Premier League"
+npm install && npm run build -w apps/api
 ```
 
-## 4. Connect the website
+Start command:
 
-Set this in `apps/web/.env.production`:
+```bash
+npm run start -w apps/api
+```
+
+Health path:
+
+```text
+/api/v1/health
+```
+
+Required environment variables are listed in `.env.example`.
+
+## Render Static Site
+
+Build command:
+
+```bash
+npm install && npm run build -w apps/web
+```
+
+Publish directory:
+
+```text
+apps/web/dist
+```
+
+Frontend environment variable:
 
 ```env
-VITE_API_BASE_URL=https://api.betynz.com
+VITE_API_BASE_URL=https://betynz-v2.onrender.com
 ```
 
-## 5. Deploy
+Add a rewrite from `/*` to `/index.html`.
 
-- Deploy `apps/api` to Render using `deploy/render.yaml`.
-- Deploy `apps/web` to Cloudflare Pages, Vercel or Netlify.
-- Point `api.betynz.com` to the Render service.
-- Point `betynz.com` and `www.betynz.com` to the frontend.
-- Add GitHub secrets used by `.github/workflows/import-football-data.yml`.
+## Automatic jobs
 
-## 6. Important source rule
-
-Use the direct CSV URLs published by Football-Data rather than scraping the visible HTML page. Keep the API private and review the source's current terms before republishing or reselling its full dataset.
+- `Import football-data CSV`: updates settled historical results.
+- `Sync upcoming Betynz predictions`: pulls today plus the next five days and rebuilds predictions every four hours.
