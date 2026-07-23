@@ -182,6 +182,9 @@ function parseDateText(value: string, fallbackDate: string) {
   if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
   const european = text.match(/\b(\d{1,2})[./-](\d{1,2})[./-](20\d{2})\b/);
   if (european) return `${european[3]}-${european[2].padStart(2, '0')}-${european[1].padStart(2, '0')}`;
+  // BetExplorer currently stores fixture timestamps as day,month,year,hour,minute.
+  const betExplorerDt = text.match(/^\s*(\d{1,2}),(\d{1,2}),(20\d{2})(?:,\d{1,2},\d{2})?\s*$/);
+  if (betExplorerDt) return `${betExplorerDt[3]}-${betExplorerDt[2].padStart(2, '0')}-${betExplorerDt[1].padStart(2, '0')}`;
   if (/\btoday\b/i.test(text)) return fallbackDate;
   if (/\btomorrow\b/i.test(text)) return addDays(fallbackDate, 1);
   const timestamp = text.match(/\b(1\d{9}|1\d{12})\b/);
@@ -230,6 +233,11 @@ function findSectionTitle($: cheerio.CheerioAPI, row: cheerio.Cheerio<any>) {
   if (directLeague) return directLeague;
   if (directCountry) return directCountry;
 
+  // Current BetExplorer fixture tables use a preceding tr.js-tournament header.
+  const tournamentRow = row.prevAll('tr.js-tournament').first();
+  const tournamentTitle = cleanText(tournamentRow.find('.table-main__tournament').first().text() || tournamentRow.text());
+  if (tournamentTitle) return tournamentTitle;
+
   const section = row.closest('.wrap-section, .league, .competition, .tournament, section, [data-league]');
   const sectionHeading = cleanText(section.find('.wrap-section__header__title, .league-name, .competition-name, .tournament-name, [class*="league"], h2, h3, h4').first().text());
   if (sectionHeading) return sectionHeading;
@@ -248,6 +256,8 @@ function parseTeams($: cheerio.CheerioAPI, row: cheerio.Cheerio<any>) {
   if (explicitHome && explicitAway) return { homeTeam: explicitHome, awayTeam: explicitAway };
 
   const combinedSelectors = [
+    'td.h-text-left > a[href*="/football/"]',
+    'td.table-main__tt > a[href*="/football/"]',
     '.in-match',
     '.table-main__participant',
     '.match-link',
@@ -261,12 +271,12 @@ function parseTeams($: cheerio.CheerioAPI, row: cheerio.Cheerio<any>) {
     if (!text) continue;
     const noScore = text.replace(/\b\d+\s*[:–-]\s*\d+\b/g, '');
     const parts = noScore.split(/\s+(?:-|–|—|vs\.?|v)\s+/i).map(cleanText).filter(Boolean);
-    if (parts.length >= 2) return { homeTeam: parts[0], awayTeam: parts[1] };
+    if (parts.length >= 2) return { homeTeam: parts[0], awayTeam: parts.slice(1).join(' - ') };
   }
 
   const candidates: string[] = [];
   const seen = new Set<string>();
-  row.find('.participant-home, .participant-away, .team-home, .team-away, .table-main__participant a, .in-match a, [class*="participant"] a, a[href*="/soccer/"]').each((_index: number, node: any) => {
+  row.find('.participant-home, .participant-away, .team-home, .team-away, .table-main__participant a, .in-match a, [class*="participant"] a, td.h-text-left a[href*="/football/"], a[href*="/soccer/"]').each((_index: number, node: any) => {
     const value = cleanText($(node).text());
     const key = normalizeName(value);
     if (!value || value.length < 2 || !key || seen.has(key)) return;
@@ -279,6 +289,11 @@ function parseTeams($: cheerio.CheerioAPI, row: cheerio.Cheerio<any>) {
 }
 
 function parseTime($: cheerio.CheerioAPI, row: cheerio.Cheerio<any>) {
+  // Prefer the visible time because BetExplorer localizes it for the rendered page.
+  const visible = cleanText(row.find('.table-main__time, .time, [class*="time"], td.h-text-right').first().text());
+  const visibleMatch = visible.match(/\b(\d{1,2}:\d{2})\b/);
+  if (visibleMatch) return visibleMatch[1];
+
   const attributes = [
     row.attr('data-time'),
     row.attr('data-dt'),
@@ -289,15 +304,17 @@ function parseTime($: cheerio.CheerioAPI, row: cheerio.Cheerio<any>) {
   for (const value of attributes) {
     const match = value.match(/(?:T|\s)(\d{1,2}:\d{2})/);
     if (match) return match[1];
+    const betExplorerDt = value.match(/^\s*\d{1,2},\d{1,2},20\d{2},(\d{1,2}),(\d{2})\s*$/);
+    if (betExplorerDt) return `${betExplorerDt[1].padStart(2, '0')}:${betExplorerDt[2]}`;
     if (/^\d{1,2}:\d{2}$/.test(value)) return value;
   }
-  const text = cleanText(row.find('.table-main__time, .time, [class*="time"], td.h-text-right').first().text());
-  const match = text.match(/\b(\d{1,2}:\d{2})\b/);
-  return match?.[1] || '12:00';
+  return '12:00';
 }
 
 function parseMatchUrl($: cheerio.CheerioAPI, row: cheerio.Cheerio<any>, pageUrl: string) {
-  const href = row.find('a[href*="/match/"], .in-match a, .table-main__participant a, a[href*="/soccer/"]').first().attr('href');
+  const href = row.find(
+    'td.h-text-left > a[href*="/football/"], td.table-main__tt > a[href*="/football/"], a[href*="/match/"], .in-match a, .table-main__participant a, a[href*="/soccer/"]'
+  ).first().attr('href');
   if (!href) return undefined;
   try {
     return new URL(href, pageUrl || BASE_URL).toString();
@@ -310,22 +327,32 @@ function parseOdds($: cheerio.CheerioAPI, row: cheerio.Cheerio<any>) {
   const values: number[] = [];
   const pushOdd = (candidate: unknown) => {
     const odd = parseOdd(candidate);
-    if (!odd || values.includes(odd)) return;
+    if (!odd) return;
+    // Equal prices are valid, so never dedupe by numeric value.
     values.push(odd);
   };
 
-  row.find('[data-odd], [data-odds], [data-value][class*="odd"], .table-main__odds, td[class*="odds"], td[class*="odd"], .odds, [data-testid*="odd"]').each((_index: number, node: any) => {
-    const element = $(node);
-    pushOdd(element.attr('data-odd') || element.attr('data-odds') || element.attr('data-value') || element.text());
-  });
+  // Current BetExplorer rows expose 1/X/2 in three ordered table-main__odds cells.
+  const currentCells = row.find('td.table-main__odds');
+  if (currentCells.length >= 3) {
+    currentCells.slice(0, 3).each((_index: number, node: any) => {
+      const element = $(node);
+      pushOdd(element.attr('data-odd') || element.attr('data-odds') || element.attr('data-value') || element.find('button').first().text() || element.text());
+    });
+  } else {
+    row.find('[data-odd], [data-odds], [data-value][class*="odd"], .table-main__odds, td[class*="odds"], td[class*="odd"], .odds, [data-testid*="odd"]').each((_index: number, node: any) => {
+      const element = $(node);
+      pushOdd(element.attr('data-odd') || element.attr('data-odds') || element.attr('data-value') || element.text());
+    });
+  }
 
   if (values.length < 3) {
     row.find('td, [role="cell"]').each((_index: number, node: any) => {
       const element = $(node);
       const className = cleanText(element.attr('class'));
-      const text = cleanText(element.text());
+      const cellText = cleanText(element.text());
       if (/time|date|participant|team|score|round/i.test(className)) return;
-      if (/^\d{1,3}[.,]\d{1,3}$/.test(text)) pushOdd(text);
+      if (/^\d{1,3}[.,]\d{1,3}$/.test(cellText)) pushOdd(cellText);
     });
   }
 
@@ -385,10 +412,9 @@ function makeFixture(input: {
 function parseTableFixtures(html: string, fallbackDate: string, pageUrl: string) {
   const $ = cheerio.load(html);
   const selectors = [
+    'table.table-main tr[data-dt]',
     'tr.table-main__row',
-    'tr[data-def]',
     'tr[data-event-id]',
-    'tr[data-dt]',
     '.table-main__row[data-def]',
     '[data-testid="match-row"]',
     '[class*="match-row"]',
@@ -400,15 +426,30 @@ function parseTableFixtures(html: string, fallbackDate: string, pageUrl: string)
 
   for (const node of nodes) {
     const row = $(node);
-    if (row.hasClass('table-main__row--head') || row.find('th').length) continue;
+    if (row.hasClass('table-main__row--head') || row.hasClass('js-tournament') || row.find('th').length) continue;
+    if (row.find('.table-main__result').length) continue;
+
+    const odds = parseOdds($, row);
+    // This feed is intentionally limited to fixtures that include complete visible 1X2 prices.
+    if (!odds.home || !odds.draw || !odds.away) continue;
+
     const teams = parseTeams($, row);
     if (!teams) continue;
     const date = rowDate($, row, fallbackDate);
+    // BetExplorer pages may also contain yesterday's settled results.
+    if (date !== fallbackDate) continue;
+
     const time = parseTime($, row);
     const title = findSectionTitle($, row);
     const { country, league } = splitLeagueTitle(title);
     const matchUrl = parseMatchUrl($, row, pageUrl);
-    const sourceIdentity = cleanText(row.attr('data-def') || row.attr('data-event-id') || row.attr('id') || matchUrl || `${date}|${league}|${teams.homeTeam}|${teams.awayTeam}`);
+    const sourceIdentity = cleanText(
+      row.attr('data-event-id')
+      || row.attr('id')
+      || matchUrl
+      || row.find('td.table-main__odds').first().attr('data-oid')
+      || `${date}|${league}|${teams.homeTeam}|${teams.awayTeam}`
+    );
     const dedupeKey = `${date}|${normalizeName(teams.homeTeam)}|${normalizeName(teams.awayTeam)}`;
     if (duplicateGuard.has(dedupeKey)) continue;
     duplicateGuard.add(dedupeKey);
@@ -422,7 +463,7 @@ function parseTableFixtures(html: string, fallbackDate: string, pageUrl: string)
       matchUrl,
       pageUrl,
       sourceIdentity,
-      odds: parseOdds($, row)
+      odds
     }));
   }
   return fixtures;

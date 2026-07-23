@@ -44,10 +44,12 @@ function datesBetween(from, to) {
 function candidatesFor(date) {
   const [year, month, day] = date.split('-');
   return [
+    // BetExplorer's "Show all today's football matches" route.
+    `${BASE_URL}/football/next/?year=${year}&month=${month}&day=${day}`,
+    // The football landing page still contains a priced next-matches table.
     `${BASE_URL}/football/?year=${year}&month=${month}&day=${day}`,
     `${BASE_URL}/soccer/?year=${year}&month=${month}&day=${day}`,
-    `${BASE_URL}/?year=${year}&month=${month}&day=${day}`,
-    `${BASE_URL}/next/soccer/?year=${year}&month=${month}&day=${day}`
+    `${BASE_URL}/?year=${year}&month=${month}&day=${day}`
   ];
 }
 

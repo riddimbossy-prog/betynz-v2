@@ -17,7 +17,7 @@ const origins = (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',')
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors({ origin: origins, methods: ['GET', 'POST'] }));
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '15mb' }));
 
 app.get('/api/v1/health', (_req: express.Request, res: express.Response) => res.json({
   ok: true,
