@@ -39,6 +39,8 @@ jobs:
           DRY_RUN: 'true'
           PREDICTION_DAYS: '6'
           PREDICTION_TIMEZONE: Africa/Accra
+          BETEXPLORER_TEST_MAX_ATTEMPTS: '2'
+          BETEXPLORER_TEST_CAPTURE_DATE_ONLY: 'true'
         run: node scripts/betexplorer-browser-sync.mjs
 
       - name: Upload browser diagnostics
@@ -46,5 +48,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: betexplorer-browser-test-report
-          path: betexplorer-browser-report.json
+          path: |
+            betexplorer-browser-report.json
+            betexplorer-browser-diagnostics/**
           if-no-files-found: warn

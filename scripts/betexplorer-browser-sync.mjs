@@ -1,5 +1,5 @@
 import { chromium } from 'playwright';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 
 const API_URL = String(process.env.API_URL || '').replace(/\/$/, '');
 const ADMIN_TOKEN = String(process.env.ADMIN_TOKEN || '');
@@ -9,6 +9,9 @@ const DAYS = Math.max(1, Math.min(10, Number(process.env.PREDICTION_DAYS || 6)))
 const FROM_DATE = process.env.FROM_DATE || dateInTimeZone(TIMEZONE);
 const TO_DATE = process.env.TO_DATE || addDays(FROM_DATE, DAYS - 1);
 const BASE_URL = 'https://www.betexplorer.com';
+const DIAGNOSTIC_DIR = 'betexplorer-browser-diagnostics';
+const MAX_TEST_ATTEMPTS = Math.max(1, Math.min(4, Number(process.env.BETEXPLORER_TEST_MAX_ATTEMPTS || 2)));
+const TEST_CAPTURE_DATE_ONLY = String(process.env.BETEXPLORER_TEST_CAPTURE_DATE_ONLY || 'true').toLowerCase() !== 'false';
 
 if (!API_URL || !ADMIN_TOKEN) {
   console.error('API_URL and ADMIN_TOKEN are required.');
@@ -42,8 +45,9 @@ function candidatesFor(date) {
   const [year, month, day] = date.split('-');
   return [
     `${BASE_URL}/football/?year=${year}&month=${month}&day=${day}`,
-    `${BASE_URL}/next/soccer/?year=${year}&month=${month}&day=${day}`,
-    `${BASE_URL}/?year=${year}&month=${month}&day=${day}`
+    `${BASE_URL}/soccer/?year=${year}&month=${month}&day=${day}`,
+    `${BASE_URL}/?year=${year}&month=${month}&day=${day}`,
+    `${BASE_URL}/next/soccer/?year=${year}&month=${month}&day=${day}`
   ];
 }
 
@@ -85,6 +89,85 @@ async function postRenderedPage(date, pageUrl, html) {
   return { status: response.status, ok: response.ok, body };
 }
 
+
+async function captureDiagnostics(page, index, date, requestedUrl, finalUrl, apiResult) {
+  await mkdir(DIAGNOSTIC_DIR, { recursive: true });
+  const prefix = `${String(index).padStart(2, '0')}-${date}`;
+  const html = await page.content();
+  const bodyText = await page.locator('body').innerText({ timeout: 10_000 }).catch(() => '');
+  const dom = await page.evaluate(() => {
+    const count = (selector) => {
+      try { return document.querySelectorAll(selector).length; } catch { return -1; }
+    };
+    const selectorCounts = {
+      tables: count('table'),
+      tableRows: count('table tr'),
+      allRows: count('tr'),
+      matchLinks: count('a[href*="/match/"]'),
+      soccerLinks: count('a[href*="/soccer/"]'),
+      footballLinks: count('a[href*="/football/"]'),
+      oddsClasses: count('[class*="odd"], [data-odd], [data-odds]'),
+      matchClasses: count('[class*="match"]'),
+      eventClasses: count('[class*="event"]'),
+      participantClasses: count('[class*="participant"]'),
+      tableMainRows: count('tr.table-main__row'),
+      dataDefRows: count('tr[data-def]'),
+      dataEventRows: count('[data-event-id]'),
+      dataDtRows: count('[data-dt]'),
+      jsonLdScripts: count('script[type="application/ld+json"]'),
+      jsonScripts: count('script[type="application/json"]')
+    };
+
+    const classCounts = {};
+    for (const element of document.querySelectorAll('[class]')) {
+      const raw = String(element.getAttribute('class') || '');
+      for (const className of raw.split(/\s+/).filter(Boolean)) {
+        if (!/(match|event|odd|participant|team|table|league|competition|fixture)/i.test(className)) continue;
+        classCounts[className] = (classCounts[className] || 0) + 1;
+      }
+    }
+
+    const links = [...document.querySelectorAll('a[href]')].slice(0, 400).map((anchor) => ({
+      text: String(anchor.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180),
+      href: anchor.href,
+      className: String(anchor.getAttribute('class') || '').slice(0, 180)
+    }));
+
+    const scripts = [...document.querySelectorAll('script')].slice(0, 120).map((script) => ({
+      type: script.type || '',
+      src: script.src || '',
+      id: script.id || '',
+      bytes: String(script.textContent || '').length
+    }));
+
+    return {
+      url: location.href,
+      title: document.title,
+      readyState: document.readyState,
+      selectorCounts,
+      frequentRelevantClasses: Object.entries(classCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 120)
+        .map(([name, count]) => ({ name, count })),
+      links,
+      scripts
+    };
+  });
+
+  await Promise.all([
+    writeFile(`${DIAGNOSTIC_DIR}/${prefix}.html`, html),
+    writeFile(`${DIAGNOSTIC_DIR}/${prefix}-body.txt`, bodyText.slice(0, 100_000)),
+    writeFile(`${DIAGNOSTIC_DIR}/${prefix}-dom.json`, JSON.stringify({
+      date,
+      requestedUrl,
+      finalUrl,
+      apiResult,
+      ...dom
+    }, null, 2)),
+    page.screenshot({ path: `${DIAGNOSTIC_DIR}/${prefix}.png`, fullPage: true }).catch(() => undefined)
+  ]);
+}
+
 const browser = await chromium.launch({
   headless: true,
   args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
@@ -104,12 +187,15 @@ const diagnostics = {
   dates: [],
   totals: { fixtures: 0, fixturesWith1X2: 0, predictions: 0, bankers: 0 }
 };
+let attemptIndex = 0;
 
 try {
-  for (const date of datesBetween(FROM_DATE, TO_DATE)) {
+  for (const date of (DRY_RUN && TEST_CAPTURE_DATE_ONLY ? [FROM_DATE] : datesBetween(FROM_DATE, TO_DATE))) {
     const dateReport = { date, attempts: [], selected: null };
 
     for (const url of candidatesFor(date)) {
+      if (DRY_RUN && attemptIndex >= MAX_TEST_ATTEMPTS) break;
+      attemptIndex += 1;
       const page = await context.newPage();
       const networkJson = [];
 
@@ -154,9 +240,13 @@ try {
       }
 
       const lower = `${title} ${bodyText}`.toLowerCase();
-      const blocked = /captcha|verify you are human|access denied|temporarily blocked|cloudflare/.test(lower);
+      const blocked = navigationStatus === 429 || /captcha|verify you are human|access denied|temporarily blocked|cloudflare/.test(lower);
       let apiResult = { status: 0, ok: false, body: { error: error || 'No HTML captured.' } };
       if (html.length >= 500 && !blocked) apiResult = await postRenderedPage(date, finalUrl, html);
+
+      if (DRY_RUN && html.length >= 500) {
+        await captureDiagnostics(page, attemptIndex, date, url, finalUrl, apiResult);
+      }
 
       const fixtures = Number(apiResult.body?.fixtures || 0);
       const priced = Number(apiResult.body?.fixturesWith1X2 || 0);
@@ -180,6 +270,7 @@ try {
       });
 
       await page.close();
+      if (DRY_RUN) await new Promise((resolve) => setTimeout(resolve, 5_000));
 
       if (blocked) {
         console.error(`BetExplorer returned an access page for ${url}. No bypass was attempted.`);
