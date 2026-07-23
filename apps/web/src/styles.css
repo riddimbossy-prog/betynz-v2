@@ -319,3 +319,106 @@ main { width: min(1380px, calc(100% - 38px)); margin: 0 auto; }
 .provisional-note > svg { flex: 0 0 auto; color: #8dbdff; }
 .provisional-note strong { color: #d8e8ff; }
 .provisional-note p { margin: 4px 0 0; color: #aab8cc; line-height: 1.5; }
+
+/* Chronos Fusion 2.6 coverage and Match Radar */
+.radar-section {
+  border-top: 1px solid rgba(255,148,64,.14);
+}
+.radar-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.radar-card {
+  min-width: 0;
+  padding: 17px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: linear-gradient(145deg, rgba(18,22,31,.98), rgba(12,15,22,.98));
+}
+.radar-topline {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+.radar-topline > div {
+  min-width: 0;
+}
+.radar-qualified,
+.radar-monitoring {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .35px;
+  text-transform: uppercase;
+}
+.radar-qualified {
+  color: #a7f4d1;
+  border: 1px solid rgba(53,216,154,.22);
+  background: rgba(53,216,154,.09);
+}
+.radar-monitoring {
+  color: #b6bfce;
+  border: 1px solid rgba(255,255,255,.09);
+  background: rgba(255,255,255,.035);
+}
+.radar-fixture-line {
+  min-height: 58px;
+  margin-top: 14px;
+}
+.radar-odds {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+  margin-top: 13px;
+}
+.radar-odds span {
+  padding: 10px;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255,255,255,.025);
+}
+.radar-odds small {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.radar-odds strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 19px;
+  color: var(--orange-2);
+}
+.radar-footer {
+  min-height: 35px;
+  margin-top: 12px;
+  padding-top: 11px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10px;
+}
+.radar-footer strong {
+  color: #d8dee8;
+  text-align: right;
+}
+
+@media (max-width: 1120px) {
+  .radar-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 680px) {
+  .radar-grid { grid-template-columns: 1fr; }
+  .radar-card { padding: 15px; }
+  .radar-topline { align-items: center; }
+  .radar-fixture-line { min-height: auto; }
+}

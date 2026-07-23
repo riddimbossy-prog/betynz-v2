@@ -81,6 +81,9 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
     listPredictions(start, end),
     listUpcomingFixtures(start, end)
   ]);
+  const radarFixtures = fixtures
+    .filter((fixture) => Boolean(fixture.odds.home && fixture.odds.draw && fixture.odds.away))
+    .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
   const sorted = allPredictions
     .filter((prediction) => prediction.engineVersion === ENGINE_VERSION)
     .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
@@ -99,9 +102,11 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
       bankers: bankers.length,
       leagues: new Set(fixtures.map((fixture) => `${fixture.country}|${fixture.leagueName}`)).size,
       pickLeagues: new Set(sorted.map((prediction) => `${prediction.country}|${prediction.leagueName}`)).size,
-      lowOddsUpgrades: sorted.filter((prediction) => prediction.upgraded).length
+      lowOddsUpgrades: sorted.filter((prediction) => prediction.upgraded).length,
+      pricedFixtures: radarFixtures.length
     },
     bankers,
-    predictions: sorted
+    predictions: sorted,
+    radarFixtures
   };
 }

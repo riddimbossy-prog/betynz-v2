@@ -123,7 +123,9 @@ export type PredictionDashboard = {
     leagues: number;
     pickLeagues: number;
     lowOddsUpgrades: number;
+    pricedFixtures: number;
   };
   bankers: PredictionRecord[];
   predictions: PredictionRecord[];
+  radarFixtures: UpcomingFixture[];
 };

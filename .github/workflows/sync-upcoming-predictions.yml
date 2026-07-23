@@ -34,9 +34,11 @@ jobs:
           DRY_RUN: 'false'
           PREDICTION_DAYS: '6'
           PREDICTION_TIMEZONE: Africa/Accra
-          BETEXPLORER_LEAGUE_PAGE_LIMIT: '30'
-          BETEXPLORER_BROWSER_RATE_MS: '1800'
-          BETEXPLORER_NO_NEW_STOP: '12'
+          BETEXPLORER_LEAGUE_PAGE_LIMIT: '120'
+          BETEXPLORER_BROWSER_RATE_MS: '2200'
+          BETEXPLORER_NO_NEW_STOP: '30'
+          BETEXPLORER_MIN_LEAGUE_PAGES: '60'
+          BETEXPLORER_BROWSER_JITTER_MS: '700'
         run: node scripts/betexplorer-browser-sync.mjs
 
       - name: Upload sync diagnostics

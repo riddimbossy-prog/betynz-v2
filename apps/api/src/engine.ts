@@ -2,7 +2,7 @@ import type { NormalizedMatch } from './types.js';
 import type { EngineSignal, MarketKey, PredictionRecord, UpcomingFixture, UpcomingOdds } from './forecast-types.js';
 import { sameLeague, teamKey } from './identity.js';
 
-export const ENGINE_VERSION = 'chronos-fusion-2.5.0';
+export const ENGINE_VERSION = 'chronos-fusion-2.6.0';
 
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value));
 const pct = (wins: number, sample: number, fallback = 0.5) => sample ? wins / sample : fallback;

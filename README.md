@@ -1,10 +1,14 @@
-# Betynz Chronos Fusion v2.5
+# Betynz Chronos Fusion v2.6
 
 Betynz prediction platform for **today plus the next five days**, using BetExplorer browser-rendered fixtures and visible 1X2 prices.
 
-## What v2.5 adds
+## What v2.6 adds
 
-- Controlled competition-page crawling for future fixtures across the six-day window
+- Wider BetExplorer catalogue discovery from all league links on the football page
+- Up to 120 league pages per production sync, with a 60-page minimum scan
+- Slow requests, jitter and stop-on-block safeguards
+- Match Radar showing every fixture with complete Home/Draw/Away odds
+- Date tabs showing both fixture and prediction counts
 - Country and league names carried into every fixture
 - **Full Chronos** selections when local league, team, venue and historical odds data are ready
 - **Provisional global-odds** selections when local history is limited
@@ -27,4 +31,4 @@ Betynz prediction platform for **today plus the next five days**, using BetExplo
 - `POST /api/v1/admin/rebuild-predictions`
 - `POST /api/v1/admin/sync-upcoming`
 
-Install `supabase/migrations/004_prediction_tiers.sql`, then follow `docs/UPGRADE_TO_V2_5.md`.
+Existing v2.5 installations need no new migration. Follow `docs/UPGRADE_TO_V2_6.md`.

@@ -1,3 +1,28 @@
+
+export type UpcomingFixture = {
+  id: string;
+  provider?: 'api-football' | 'betexplorer' | 'hybrid';
+  providerUrl?: string;
+  oddsSource?: string;
+  dataQuality?: number;
+  leagueCode: string;
+  leagueName: string;
+  country: string;
+  season: string;
+  kickoff: string;
+  date: string;
+  status: string;
+  venue?: string;
+  homeTeam: string;
+  awayTeam: string;
+  odds: {
+    home?: number;
+    draw?: number;
+    away?: number;
+    [key: string]: number | undefined;
+  };
+};
+
 export type EngineSignal = {
   key: 'chronos' | 'athena' | 'zeus' | 'leonidas';
   name: string;
@@ -53,9 +78,11 @@ export type PredictionDashboard = {
     leagues: number;
     pickLeagues: number;
     lowOddsUpgrades: number;
+    pricedFixtures: number;
   };
   bankers: Prediction[];
   predictions: Prediction[];
+  radarFixtures: UpcomingFixture[];
 };
 
 export type HistoricalDashboard = {

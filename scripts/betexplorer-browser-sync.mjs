@@ -12,9 +12,11 @@ const BASE_URL = 'https://www.betexplorer.com';
 const DIAGNOSTIC_DIR = 'betexplorer-browser-diagnostics';
 const LEAGUE_PAGE_LIMIT = DRY_RUN
   ? Math.max(0, Math.min(4, Number(process.env.BETEXPLORER_TEST_LEAGUE_PAGES || 2)))
-  : Math.max(5, Math.min(80, Number(process.env.BETEXPLORER_LEAGUE_PAGE_LIMIT || 30)));
-const REQUEST_DELAY_MS = Math.max(900, Number(process.env.BETEXPLORER_BROWSER_RATE_MS || 1800));
-const NO_NEW_FIXTURE_STOP = Math.max(6, Number(process.env.BETEXPLORER_NO_NEW_STOP || 12));
+  : Math.max(20, Math.min(180, Number(process.env.BETEXPLORER_LEAGUE_PAGE_LIMIT || 120)));
+const REQUEST_DELAY_MS = Math.max(1400, Number(process.env.BETEXPLORER_BROWSER_RATE_MS || 2200));
+const NO_NEW_FIXTURE_STOP = Math.max(12, Number(process.env.BETEXPLORER_NO_NEW_STOP || 30));
+const MIN_LEAGUE_PAGES = DRY_RUN ? 1 : Math.max(20, Math.min(150, Number(process.env.BETEXPLORER_MIN_LEAGUE_PAGES || 60)));
+const REQUEST_JITTER_MS = Math.max(0, Number(process.env.BETEXPLORER_BROWSER_JITTER_MS || 700));
 
 if (!API_URL || !ADMIN_TOKEN) {
   console.error('API_URL and ADMIN_TOKEN are required.');
@@ -110,18 +112,14 @@ async function openPage(context, requestedUrl) {
 async function discoverLeagueLinks(page) {
   return page.evaluate(() => {
     const result = [];
-    const seen = new Set();
-    const anchors = [
-      ...document.querySelectorAll('tr.js-tournament a[href*="/football/"], .table-main__tournament a[href*="/football/"]')
-    ];
+    const byUrl = new Map();
+    const anchors = [...document.querySelectorAll('a[href*="/football/"]')];
     for (const anchor of anchors) {
       try {
         const url = new URL(anchor.getAttribute('href') || '', location.href);
         if (url.hostname !== 'www.betexplorer.com' && url.hostname !== 'betexplorer.com') continue;
         if (!/^\/football\/[^/]+\/[^/]+\/$/.test(url.pathname)) continue;
         const key = url.origin + url.pathname;
-        if (seen.has(key)) continue;
-        seen.add(key);
         const header = anchor.closest('tr.js-tournament');
         let upcomingRows = 0;
         let pricedRows = 0;
@@ -135,15 +133,18 @@ async function discoverLeagueLinks(page) {
             cursor = cursor.nextElementSibling;
           }
         }
-        result.push({
-          url: key,
-          title: String(anchor.textContent || anchor.getAttribute('title') || '').replace(/\s+/g, ' ').trim(),
-          priority: pricedRows * 10 + upcomingRows
-        });
+        const text = String(anchor.textContent || anchor.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
+        const inMainTable = Boolean(header);
+        const priority = (inMainTable ? 10_000 : 0) + pricedRows * 100 + upcomingRows * 10;
+        const current = byUrl.get(key);
+        if (!current || priority > current.priority) {
+          byUrl.set(key, { url: key, title: text, priority, inMainTable });
+        }
       } catch {
         // Ignore malformed links.
       }
     }
+    for (const entry of byUrl.values()) result.push(entry);
     return result;
   });
 }
@@ -207,6 +208,9 @@ const report = {
   pagesVisited: 0,
   discoveredLeagues: 0,
   selectedLeaguePages: 0,
+  leaguePageLimit: LEAGUE_PAGE_LIMIT,
+  minimumLeaguePages: MIN_LEAGUE_PAGES,
+  partial: false,
   blocked: false,
   pages: [],
   totals: {
@@ -268,6 +272,7 @@ async function processUrl(rawUrl, label) {
 
   if (opened.blocked) {
     report.blocked = true;
+    report.partial = fixtureIds.size > 0;
     console.error(`BetExplorer returned an access page for ${requestedUrl}. No bypass was attempted.`);
   }
 
@@ -289,24 +294,24 @@ try {
       .slice(0, LEAGUE_PAGE_LIMIT);
     for (let index = 0; index < leagueLinks.length; index += 1) {
       const entry = leagueLinks[index];
-      await sleep(REQUEST_DELAY_MS);
+      await sleep(REQUEST_DELAY_MS + Math.floor(Math.random() * (REQUEST_JITTER_MS + 1)));
       const result = await processUrl(entry.url, `league:${entry.title || index + 1}`);
       report.selectedLeaguePages += 1;
       if (result.blocked) break;
 
-      if (result.fixtureTab && result.fixtureTab !== entry.url && !DRY_RUN) {
-        await sleep(REQUEST_DELAY_MS);
+      if (result.newFixtures === 0 && result.fixtureTab && result.fixtureTab !== entry.url && !DRY_RUN) {
+        await sleep(REQUEST_DELAY_MS + Math.floor(Math.random() * (REQUEST_JITTER_MS + 1)));
         const tabResult = await processUrl(result.fixtureTab, `fixtures:${entry.title || index + 1}`);
         if (tabResult.blocked) break;
         result.newFixtures += tabResult.newFixtures;
       }
 
       noNewStreak = result.newFixtures > 0 ? 0 : noNewStreak + 1;
-      if (!DRY_RUN && noNewStreak >= NO_NEW_FIXTURE_STOP && fixtureIds.size > 0) break;
+      if (!DRY_RUN && report.selectedLeaguePages >= MIN_LEAGUE_PAGES && noNewStreak >= NO_NEW_FIXTURE_STOP && fixtureIds.size > 0) break;
     }
   }
 
-  if (!DRY_RUN && !report.blocked) {
+  if (!DRY_RUN && fixtureIds.size > 0) {
     const rebuilt = await apiPost('/api/v1/admin/rebuild-predictions', { from: FROM_DATE, to: TO_DATE });
     if (!rebuilt.ok) throw new Error(rebuilt.body?.error || `Prediction rebuild failed with HTTP ${rebuilt.status}`);
     report.totals = {
@@ -330,7 +335,7 @@ try {
 await writeFile('betexplorer-browser-report.json', JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report, null, 2));
 
-if (report.blocked) process.exit(24);
+if (report.blocked && report.totals.fixtures < 1) process.exit(24);
 if (report.totals.fixtures < 1) {
   console.error('Browser collector failed: no fixtures were parsed.');
   process.exit(22);

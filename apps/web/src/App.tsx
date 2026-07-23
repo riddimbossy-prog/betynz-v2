@@ -25,15 +25,16 @@ import {
   Zap
 } from 'lucide-react';
 import { loadHistoricalDashboard, loadPredictions } from './api';
-import type { HistoricalDashboard, Prediction, PredictionDashboard } from './types';
+import type { HistoricalDashboard, Prediction, PredictionDashboard, UpcomingFixture } from './types';
 
 const emptyPredictions: PredictionDashboard = {
   source: 'offline',
   generatedAt: new Date().toISOString(),
   window: { from: '', to: '', days: [] },
-  metrics: { fixtures: 0, picks: 0, fullPicks: 0, provisionalPicks: 0, bankers: 0, leagues: 0, pickLeagues: 0, lowOddsUpgrades: 0 },
+  metrics: { fixtures: 0, picks: 0, fullPicks: 0, provisionalPicks: 0, bankers: 0, leagues: 0, pickLeagues: 0, lowOddsUpgrades: 0, pricedFixtures: 0 },
   bankers: [],
-  predictions: []
+  predictions: [],
+  radarFixtures: []
 };
 
 const emptyHistory: HistoricalDashboard = {
@@ -135,6 +136,34 @@ function PredictionCard({ prediction, onExplain, inList, onToggleList }: {
   );
 }
 
+function RadarCard({ fixture, prediction }: { fixture: UpcomingFixture; prediction?: Prediction }) {
+  return (
+    <article className="radar-card">
+      <div className="radar-topline">
+        <div>
+          <span className="league-label">{fixture.country ? `${fixture.country} · ` : ''}{fixture.leagueName}</span>
+          <span className="kickoff"><Clock3 size={14} />{timeLabel(fixture.kickoff)}</span>
+        </div>
+        <span className={prediction ? 'radar-qualified' : 'radar-monitoring'}>{prediction ? 'Qualified pick' : 'Monitoring'}</span>
+      </div>
+      <div className="fixture-line radar-fixture-line">
+        <strong>{fixture.homeTeam}</strong>
+        <span>vs</span>
+        <strong>{fixture.awayTeam}</strong>
+      </div>
+      <div className="radar-odds" aria-label="One X Two odds">
+        <span><small>Home</small><strong>{fixture.odds.home?.toFixed(2) ?? '—'}</strong></span>
+        <span><small>Draw</small><strong>{fixture.odds.draw?.toFixed(2) ?? '—'}</strong></span>
+        <span><small>Away</small><strong>{fixture.odds.away?.toFixed(2) ?? '—'}</strong></span>
+      </div>
+      <div className="radar-footer">
+        <span>{fixture.oddsSource || fixture.provider || 'BetExplorer'} prices</span>
+        {prediction ? <strong>{prediction.selection} · {prediction.odds.toFixed(2)}</strong> : <small>No pick forced</small>}
+      </div>
+    </article>
+  );
+}
+
 export default function App() {
   const [data, setData] = useState<PredictionDashboard>(emptyPredictions);
   const [history, setHistory] = useState<HistoricalDashboard>(emptyHistory);
@@ -185,6 +214,14 @@ export default function App() {
   const provisionalPredictions = useMemo(() => datePredictions.filter((prediction) => prediction.tier === 'provisional'), [datePredictions]);
   const bankers = useMemo(() => fullPredictions.filter((prediction) => prediction.banker).slice(0, 3), [fullPredictions]);
   const regular = useMemo(() => fullPredictions.filter((prediction) => !prediction.banker), [fullPredictions]);
+  const predictionByFixture = useMemo(() => new Map(data.predictions.map((prediction) => [prediction.fixtureId, prediction])), [data.predictions]);
+  const radarFixtures = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return (data.radarFixtures ?? [])
+      .filter((fixture) => fixture.date === selectedDate)
+      .filter((fixture) => !q || `${fixture.homeTeam} ${fixture.awayTeam} ${fixture.leagueName} ${fixture.country}`.toLowerCase().includes(q))
+      .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+  }, [data.radarFixtures, selectedDate, query]);
   const selectedLabel = selectedDate ? dayLabel(selectedDate, data.window.days.indexOf(selectedDate)) : { short: 'Today', date: '' };
 
   const toggleList = (fixtureId: string) => {
@@ -226,9 +263,9 @@ export default function App() {
       <main id="top">
         <section className="hero">
           <div className="hero-copy">
-            <span className="eyebrow"><Sparkles size={14} /> CHRONOS FUSION 2.5</span>
-            <h1>Six days.<br /><span>Full and provisional intelligence.</span></h1>
-            <p>Full Chronos picks require local league and team history. When that history is not ready, a clearly marked provisional tier can use only strict 1X2 odds patterns—and it can never become a Banker.</p>
+            <span className="eyebrow"><Sparkles size={14} /> CHRONOS FUSION 2.6</span>
+            <h1>Six days.<br /><span>More leagues. Clearer intelligence.</span></h1>
+            <p>Betynz now scans a much wider BetExplorer league catalogue. Every priced fixture appears in Match Radar, while only statistically qualified selections enter the prediction and Banker boards.</p>
             <div className="hero-actions">
               <a className="primary-button" href="#bankers"><Star size={18} />See Today’s Bankers</a>
               <a className="secondary-button" href="#board"><BarChart3 size={18} />Open Full Board</a>
@@ -243,7 +280,7 @@ export default function App() {
             <div className="hero-orbit"><span>CHRONOS</span><strong>{data.metrics.picks}</strong><small>qualified picks over six days</small></div>
             <div className="hero-metric-grid">
               <span><small>Bankers</small><strong>{data.metrics.bankers}</strong></span>
-              <span><small>Fixtures checked</small><strong>{data.metrics.fixtures}</strong></span>
+              <span><small>Priced fixtures</small><strong>{data.metrics.pricedFixtures}</strong></span>
               <span><small>Leagues</small><strong>{data.metrics.leagues}</strong></span>
               <span><small>Provisional</small><strong>{data.metrics.provisionalPicks}</strong></span>
             </div>
@@ -255,9 +292,10 @@ export default function App() {
             {data.window.days.map((date, index) => {
               const label = dayLabel(date, index);
               const count = data.predictions.filter((prediction) => prediction.date === date).length;
+              const fixtureCount = (data.radarFixtures ?? []).filter((fixture) => fixture.date === date).length;
               return (
                 <button key={date} className={selectedDate === date ? 'active' : ''} onClick={() => setSelectedDate(date)}>
-                  <span>{label.short}</span><strong>{label.date}</strong><small>{count} pick{count === 1 ? '' : 's'}</small>
+                  <span>{label.short}</span><strong>{label.date}</strong><small>{count} picks · {fixtureCount} fixtures</small>
                 </button>
               );
             })}
@@ -267,8 +305,8 @@ export default function App() {
         <section className="metrics-row">
           <article><span><Target /></span><div><small>{selectedLabel.short} qualified picks</small><strong>{datePredictions.length}</strong></div></article>
           <article><span><Trophy /></span><div><small>{selectedLabel.short} bankers</small><strong>{bankers.length}</strong></div></article>
-          <article><span><BrainCircuit /></span><div><small>Engine version</small><strong>2.5</strong></div></article>
-          <article><span><Activity /></span><div><small>Weak matches rejected</small><strong>{Math.max(0, data.metrics.fixtures - data.metrics.picks)}</strong></div></article>
+          <article><span><BrainCircuit /></span><div><small>Engine version</small><strong>2.6</strong></div></article>
+          <article><span><Activity /></span><div><small>{selectedLabel.short} fixtures on radar</small><strong>{radarFixtures.length}</strong></div></article>
         </section>
 
         <section className="content-section banker-section" id="bankers">
@@ -358,6 +396,22 @@ export default function App() {
           )}
         </section>
 
+        <section className="content-section radar-section" id="radar">
+          <div className="section-heading">
+            <div><span className="eyebrow"><Activity size={14} /> MATCH RADAR</span><h2>Every priced fixture found</h2><p>This is the complete fixture-and-1X2-odds feed for the selected day. A fixture can appear here without becoming a prediction.</p></div>
+            <span className="board-count">{radarFixtures.length} priced fixtures</span>
+          </div>
+          {radarFixtures.length === 0 ? (
+            <div className="empty-panel compact"><Info /><div><h3>No priced fixtures captured for this day</h3><p>The next sync will continue scanning the wider league catalogue.</p></div></div>
+          ) : (
+            <div className="radar-grid">
+              {radarFixtures.map((fixture) => (
+                <RadarCard key={fixture.id} fixture={fixture} prediction={predictionByFixture.get(fixture.id)} />
+              ))}
+            </div>
+          )}
+        </section>
+
         <section className="method-note">
           <Zap />
           <div><h3>The 1.19 minimum is enforced</h3><p>When a selected market is priced below 1.19, Betynz tests the next stronger related market. The upgrade is published only when it passes stricter probability, sample and contradiction checks.</p></div>
@@ -378,6 +432,7 @@ export default function App() {
         <a href="#bankers" onClick={() => setMenuOpen(false)}>Bankers</a>
         <a href="#board" onClick={() => setMenuOpen(false)}>Full board</a>
         <a href="#provisional" onClick={() => setMenuOpen(false)}>Provisional picks</a>
+        <a href="#radar" onClick={() => setMenuOpen(false)}>Match Radar</a>
         <a href="#" onClick={() => setMenuOpen(false)}>Chronos Lab</a>
         <a href="#" onClick={() => setMenuOpen(false)}>Proof</a>
       </aside>
@@ -425,7 +480,7 @@ export default function App() {
       <nav className="mobile-nav">
         <a href="#top"><Activity /><span>Home</span></a>
         <a href="#bankers"><Star /><span>Bankers</span></a>
-        <a href="#board"><BarChart3 /><span>Board</span></a>
+        <a href="#radar"><Activity /><span>Radar</span></a>
         <button onClick={() => setMenuOpen(true)}><Menu /><span>Menu</span></button>
       </nav>
     </div>
