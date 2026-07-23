@@ -1,6 +1,6 @@
-# Betynz Chronos Fusion v2.1 setup
+# Betynz Multi-League Chronos Fusion v2.2 setup
 
-For the existing live Betynz deployment, use `UPGRADE_TO_V2_1.md`.
+Use `UPGRADE_TO_V2_2.md` for the existing live Betynz deployment and `BETEXPLORER_MULTI_LEAGUE_SETUP.md` for provider configuration.
 
 ## Local development
 
@@ -16,14 +16,15 @@ npm run dev
 
 ## Database order
 
-Run both migrations once, in order:
+Run the migrations once, in order:
 
 ```text
 supabase/migrations/001_schema.sql
 supabase/migrations/002_prediction_engine.sql
+supabase/migrations/003_multileague_providers.sql
 ```
 
-Migration 001 stores settled historical results. Migration 002 stores upcoming fixtures and final predictions.
+Migration 001 stores settled historical results. Migration 002 stores upcoming fixtures and predictions. Migration 003 adds provider, source URL and data-quality metadata.
 
 ## Render API
 
@@ -72,4 +73,5 @@ Add a rewrite from `/*` to `/index.html`.
 ## Automatic jobs
 
 - `Import football-data CSV`: updates settled historical results.
-- `Sync upcoming Betynz predictions`: pulls today plus the next five days and rebuilds predictions every four hours.
+- `Test BetExplorer fixture feed`: checks the current public fixture parser without saving data.
+- `Sync upcoming Betynz predictions`: collects today plus the next five days and rebuilds predictions every four hours.

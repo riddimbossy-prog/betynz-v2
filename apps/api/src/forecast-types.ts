@@ -41,6 +41,10 @@ export type UpcomingOdds = Partial<Record<
 >>;
 
 export type UpcomingFixture = {
+  provider?: 'api-football' | 'betexplorer' | 'hybrid';
+  providerUrl?: string;
+  oddsSource?: string;
+  dataQuality?: number;
   id: string;
   providerFixtureId: number;
   leagueId: number;

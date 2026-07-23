@@ -134,12 +134,13 @@ async function fetchOddsForDate(date: string) {
   const combined = new Map<number, UpcomingOdds>();
   let page = 1;
   let totalPages = 1;
+  const maxPages = Math.max(1, Math.min(100, Number(process.env.API_FOOTBALL_MAX_ODDS_PAGES || 50)));
   do {
     const payload = await apiGet(`/odds?date=${encodeURIComponent(date)}&page=${page}`);
     for (const [fixtureId, odds] of parseOddsResponse(payload)) combined.set(fixtureId, odds);
     totalPages = Number(payload?.paging?.total ?? 1);
     page += 1;
-  } while (page <= Math.min(totalPages, 10));
+  } while (page <= Math.min(totalPages, maxPages));
   return combined;
 }
 
@@ -184,6 +185,9 @@ export async function fetchUpcomingFixtures(from: string, to: string): Promise<U
       const kickoff = new Date(item.fixture.date).toISOString();
       return {
         id: buildId(providerFixtureId),
+        provider: 'api-football',
+        oddsSource: 'api-football',
+        dataQuality: Object.keys(oddsByFixture.get(providerFixtureId) ?? {}).length >= 5 ? 85 : 65,
         providerFixtureId,
         leagueId: Number(item.league.id ?? 0),
         leagueCode: String(item.league.id ?? item.league.name ?? 'unknown'),

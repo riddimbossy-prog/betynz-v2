@@ -1,4 +1,4 @@
-import { fetchUpcomingFixtures } from './football-api.js';
+import { fetchMultiLeagueUpcomingFixtures } from './fixture-provider.js';
 import { analyzeFixture } from './engine.js';
 import { allMatches, listPredictions, listUpcomingFixtures, sourceName, upsertPredictions, upsertUpcomingFixtures } from './store.js';
 import type { PredictionDashboard } from './forecast-types.js';
@@ -24,7 +24,8 @@ export function predictionWindow(days = Number(process.env.PREDICTION_DAYS || 6)
 
 export async function syncUpcomingPredictions() {
   const window = predictionWindow();
-  const fixtures = await fetchUpcomingFixtures(window.from, window.to);
+  const providerResult = await fetchMultiLeagueUpcomingFixtures(window.from, window.to);
+  const fixtures = providerResult.fixtures;
   await upsertUpcomingFixtures(fixtures);
   const historicalMatches = await allMatches();
   const predictions = fixtures
@@ -36,7 +37,8 @@ export async function syncUpcomingPredictions() {
     fixtures: fixtures.length,
     predictions: predictions.length,
     bankers: predictions.filter((prediction) => prediction.banker).length,
-    lowOddsUpgrades: predictions.filter((prediction) => prediction.upgraded).length
+    lowOddsUpgrades: predictions.filter((prediction) => prediction.upgraded).length,
+    providers: providerResult.report
   };
 }
 

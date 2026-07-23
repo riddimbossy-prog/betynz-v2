@@ -73,6 +73,10 @@ export async function upsertUpcomingFixtures(fixtures: UpcomingFixture[]) {
   const rows = fixtures.map((fixture) => ({
     external_id: fixture.id,
     provider_fixture_id: fixture.providerFixtureId,
+    provider: fixture.provider ?? 'api-football',
+    provider_url: fixture.providerUrl ?? null,
+    odds_source: fixture.oddsSource ?? fixture.provider ?? 'unknown',
+    data_quality: fixture.dataQuality ?? 60,
     league_id: fixture.leagueId,
     league_code: fixture.leagueCode,
     league_name: fixture.leagueName,
@@ -213,6 +217,10 @@ function dbToUpcoming(row: any): UpcomingFixture {
   return {
     id: row.external_id,
     providerFixtureId: Number(row.provider_fixture_id),
+    provider: row.provider ?? 'api-football',
+    providerUrl: row.provider_url ?? undefined,
+    oddsSource: row.odds_source ?? undefined,
+    dataQuality: row.data_quality == null ? undefined : Number(row.data_quality),
     leagueId: Number(row.league_id ?? 0),
     leagueCode: row.league_code,
     leagueName: row.league_name,

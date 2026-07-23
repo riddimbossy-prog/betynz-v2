@@ -1,0 +1,33 @@
+name: Test BetExplorer fixture feed
+
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: Start date (YYYY-MM-DD); leave blank for today
+        required: false
+        type: string
+      to:
+        description: End date (YYYY-MM-DD); leave blank for prediction-window end
+        required: false
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call protected BetExplorer test endpoint
+        env:
+          API_URL: ${{ secrets.BETYNZ_API_URL }}
+          ADMIN_TOKEN: ${{ secrets.BETYNZ_ADMIN_IMPORT_TOKEN }}
+          FROM_DATE: ${{ inputs.from }}
+          TO_DATE: ${{ inputs.to }}
+        run: |
+          test -n "$API_URL" && test -n "$ADMIN_TOKEN"
+          BODY=$(printf '{"from":"%s","to":"%s"}' "$FROM_DATE" "$TO_DATE")
+          curl --fail --silent --show-error \
+            -X POST "$API_URL/api/v1/admin/test-betexplorer" \
+            -H "content-type: application/json" \
+            -H "x-admin-token: $ADMIN_TOKEN" \
+            --data "$BODY" | tee betexplorer-report.json
+          python -m json.tool betexplorer-report.json

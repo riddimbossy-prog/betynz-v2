@@ -8,6 +8,8 @@ import { buildOddsBands } from './patterns.js';
 import { importFootballDataUrl } from './importer.js';
 import { ENGINE_VERSION } from './engine.js';
 import { getPredictionDashboard, predictionWindow, syncUpcomingPredictions } from './prediction-service.js';
+import { providerConfiguration } from './fixture-provider.js';
+import { fetchBetExplorerFixtures } from './betexplorer.js';
 
 const app = express();
 const port = Number(process.env.PORT || 8787);
@@ -23,8 +25,14 @@ app.get('/api/v1/health', (_req: express.Request, res: express.Response) => res.
   source: sourceName(),
   engineVersion: ENGINE_VERSION,
   predictionWindow: predictionWindow(),
+  providers: providerConfiguration(),
   time: new Date().toISOString()
 }));
+
+
+app.get('/api/v1/providers/status', (_req: express.Request, res: express.Response) => {
+  res.json(providerConfiguration());
+});
 
 app.get('/api/v1/matches', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   try {
@@ -63,10 +71,23 @@ app.get('/api/v1/patterns/odds-bands', async (_req: express.Request, res: expres
 app.get('/api/v1/upcoming-fixtures', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   try {
     const defaults = predictionWindow();
-    const query = z.object({ from: z.string().optional(), to: z.string().optional() }).parse(req.query);
+    const query = z.object({
+      from: z.string().optional(),
+      to: z.string().optional(),
+      league: z.string().optional(),
+      country: z.string().optional(),
+      provider: z.enum(['api-football', 'betexplorer', 'hybrid']).optional(),
+      oddsOnly: z.coerce.boolean().optional(),
+      limit: z.coerce.number().min(1).max(5000).default(5000)
+    }).parse(req.query);
     const from = query.from || defaults.from;
     const to = query.to || defaults.to;
-    const fixtures = await listUpcomingFixtures(from, to);
+    let fixtures = await listUpcomingFixtures(from, to);
+    if (query.league) fixtures = fixtures.filter((fixture) => `${fixture.leagueCode} ${fixture.leagueName}`.toLowerCase().includes(query.league!.toLowerCase()));
+    if (query.country) fixtures = fixtures.filter((fixture) => fixture.country.toLowerCase().includes(query.country!.toLowerCase()));
+    if (query.provider) fixtures = fixtures.filter((fixture) => fixture.provider === query.provider);
+    if (query.oddsOnly) fixtures = fixtures.filter((fixture) => Object.keys(fixture.odds).length > 0);
+    fixtures = fixtures.slice(0, query.limit);
     res.json({ source: sourceName(), window: { from, to }, count: fixtures.length, fixtures });
   } catch (error) { next(error); }
 });
@@ -131,6 +152,17 @@ app.post('/api/v1/admin/import', async (req: express.Request, res: express.Respo
     }).parse(req.body);
     const result = await importFootballDataUrl(body.url, body.season, body.leagueName);
     res.json({ imported: result.imported, settled: result.settled });
+  } catch (error) { next(error); }
+});
+
+
+app.post('/api/v1/admin/test-betexplorer', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    if (!authorizeAdmin(req, res)) return;
+    const defaults = predictionWindow();
+    const body = z.object({ from: z.string().optional(), to: z.string().optional() }).parse(req.body ?? {});
+    const result = await fetchBetExplorerFixtures(body.from || defaults.from, body.to || defaults.to);
+    res.json({ report: result.report, sample: result.fixtures.slice(0, 20) });
   } catch (error) { next(error); }
 });
 

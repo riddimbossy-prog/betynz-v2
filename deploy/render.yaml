@@ -21,6 +21,24 @@ services:
         sync: false
       - key: API_FOOTBALL_BASE_URL
         value: https://v3.football.api-sports.io
+      - key: API_FOOTBALL_MAX_ODDS_PAGES
+        value: 50
+      - key: FIXTURE_PROVIDER
+        value: hybrid
+      - key: BETEXPLORER_ENABLED
+        value: false
+      - key: BETEXPLORER_BASE_URL
+        value: https://www.betexplorer.com
+      - key: BETEXPLORER_FIXTURE_URL_TEMPLATE
+        value: https://www.betexplorer.com/next/soccer/?year={YYYY}&month={MM}&day={DD}
+      - key: BETEXPLORER_RATE_MS
+        value: 1800
+      - key: BETEXPLORER_TIMEOUT_MS
+        value: 20000
+      - key: BETEXPLORER_MAX_PAGES
+        value: 18
+      - key: BETEXPLORER_UTC_OFFSET_MINUTES
+        value: 0
       - key: PREDICTION_DAYS
         value: 6
       - key: PREDICTION_TIMEZONE
