@@ -284,3 +284,38 @@ main { width: min(1380px, calc(100% - 38px)); margin: 0 auto; }
   .engine-row span { font-size: 8px; }
   .why-button, .list-button { padding: 0 8px; font-size: 11px; }
 }
+
+/* Chronos Fusion 2.5 tiers */
+.provisional-card {
+  border-color: rgba(90, 160, 255, .28);
+  background: radial-gradient(circle at 90% 0, rgba(76, 130, 220, .12), transparent 38%), linear-gradient(145deg, #141924, #0f131b);
+}
+.provisional-badge {
+  padding: 6px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: #a9cdff;
+  background: rgba(70, 126, 220, .16);
+  border: 1px solid rgba(111, 165, 255, .22);
+}
+.provisional-section {
+  border-top: 1px solid rgba(111, 165, 255, .14);
+}
+.provisional-note {
+  display: flex;
+  gap: 12px;
+  padding: 15px;
+  margin: 14px 0;
+  border-radius: 13px;
+  border: 1px solid rgba(111, 165, 255, .24);
+  background: rgba(64, 112, 190, .10);
+}
+.provisional-note > svg { flex: 0 0 auto; color: #8dbdff; }
+.provisional-note strong { color: #d8e8ff; }
+.provisional-note p { margin: 4px 0 0; color: #aab8cc; line-height: 1.5; }

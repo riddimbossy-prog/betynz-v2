@@ -39,8 +39,8 @@ jobs:
           DRY_RUN: 'true'
           PREDICTION_DAYS: '6'
           PREDICTION_TIMEZONE: Africa/Accra
-          BETEXPLORER_TEST_MAX_ATTEMPTS: '2'
-          BETEXPLORER_TEST_CAPTURE_DATE_ONLY: 'true'
+          BETEXPLORER_TEST_LEAGUE_PAGES: '2'
+          BETEXPLORER_BROWSER_RATE_MS: '1800'
         run: node scripts/betexplorer-browser-sync.mjs
 
       - name: Upload browser diagnostics

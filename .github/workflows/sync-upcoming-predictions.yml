@@ -12,7 +12,7 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -34,6 +34,9 @@ jobs:
           DRY_RUN: 'false'
           PREDICTION_DAYS: '6'
           PREDICTION_TIMEZONE: Africa/Accra
+          BETEXPLORER_LEAGUE_PAGE_LIMIT: '30'
+          BETEXPLORER_BROWSER_RATE_MS: '1800'
+          BETEXPLORER_NO_NEW_STOP: '12'
         run: node scripts/betexplorer-browser-sync.mjs
 
       - name: Upload sync diagnostics

@@ -31,7 +31,7 @@ const emptyPredictions: PredictionDashboard = {
   source: 'offline',
   generatedAt: new Date().toISOString(),
   window: { from: '', to: '', days: [] },
-  metrics: { fixtures: 0, picks: 0, bankers: 0, leagues: 0, lowOddsUpgrades: 0 },
+  metrics: { fixtures: 0, picks: 0, fullPicks: 0, provisionalPicks: 0, bankers: 0, leagues: 0, pickLeagues: 0, lowOddsUpgrades: 0 },
   bankers: [],
   predictions: []
 };
@@ -82,13 +82,14 @@ function PredictionCard({ prediction, onExplain, inList, onToggleList }: {
 }) {
   const passes = prediction.engines.filter((engine) => engine.pass).length;
   return (
-    <article className={`prediction-card ${prediction.banker ? 'banker-card' : ''}`}>
+    <article className={`prediction-card ${prediction.banker ? 'banker-card' : ''} ${prediction.tier === 'provisional' ? 'provisional-card' : ''}`}>
       <div className="prediction-topline">
         <div>
           <span className="league-label">{prediction.country ? `${prediction.country} · ` : ''}{prediction.leagueName}</span>
           <span className="kickoff"><Clock3 size={14} />{timeLabel(prediction.kickoff)}</span>
         </div>
         <div className="card-badges">
+          {prediction.tier === 'provisional' && <span className="provisional-badge"><Info size={13} />Provisional</span>}
           {prediction.upgraded && <span className="upgrade-badge"><TrendingUp size={13} />Upgraded</span>}
           {prediction.banker && <span className="banker-badge"><Star size={13} />Banker</span>}
         </div>
@@ -101,7 +102,7 @@ function PredictionCard({ prediction, onExplain, inList, onToggleList }: {
       </div>
 
       <div className="selection-panel">
-        <div><small>Chronos selection</small><h3>{prediction.selection}</h3></div>
+        <div><small>{prediction.tier === 'full' ? 'Full Chronos selection' : 'Provisional odds selection'}</small><h3>{prediction.selection}</h3></div>
         <div className="price"><small>Odds</small><strong>{prediction.odds.toFixed(2)}</strong></div>
       </div>
 
@@ -110,7 +111,9 @@ function PredictionCard({ prediction, onExplain, inList, onToggleList }: {
       <div className="stat-strip">
         <span><small>Model</small><strong>{Math.round(prediction.probability)}%</strong></span>
         <span><small>History</small><strong>{Math.round(Number(prediction.evidence.historicalHitRate ?? 0))}%</strong></span>
-        <span><small>Edge</small><strong className={prediction.edge >= 0 ? 'positive' : ''}>{prediction.edge >= 0 ? '+' : ''}{prediction.edge.toFixed(1)}%</strong></span>
+        {prediction.tier === 'provisional'
+          ? <span><small>Price fit</small><strong>{Math.round(Number(prediction.evidence.oddsPatternFit ?? 0))}%</strong></span>
+          : <span><small>Edge</small><strong className={prediction.edge >= 0 ? 'positive' : ''}>{prediction.edge >= 0 ? '+' : ''}{prediction.edge.toFixed(1)}%</strong></span>}
         <span><small>Engines</small><strong>{passes}/4</strong></span>
       </div>
 
@@ -178,8 +181,10 @@ export default function App() {
       .sort((a, b) => b.confidence - a.confidence || a.kickoff.localeCompare(b.kickoff));
   }, [data.predictions, selectedDate, query]);
 
-  const bankers = useMemo(() => datePredictions.filter((prediction) => prediction.banker).slice(0, 3), [datePredictions]);
-  const regular = useMemo(() => datePredictions.filter((prediction) => !prediction.banker), [datePredictions]);
+  const fullPredictions = useMemo(() => datePredictions.filter((prediction) => prediction.tier === 'full'), [datePredictions]);
+  const provisionalPredictions = useMemo(() => datePredictions.filter((prediction) => prediction.tier === 'provisional'), [datePredictions]);
+  const bankers = useMemo(() => fullPredictions.filter((prediction) => prediction.banker).slice(0, 3), [fullPredictions]);
+  const regular = useMemo(() => fullPredictions.filter((prediction) => !prediction.banker), [fullPredictions]);
   const selectedLabel = selectedDate ? dayLabel(selectedDate, data.window.days.indexOf(selectedDate)) : { short: 'Today', date: '' };
 
   const toggleList = (fixtureId: string) => {
@@ -221,9 +226,9 @@ export default function App() {
       <main id="top">
         <section className="hero">
           <div className="hero-copy">
-            <span className="eyebrow"><Sparkles size={14} /> CHRONOS FUSION 2.3</span>
-            <h1>Six days.<br /><span>Only qualified picks.</span></h1>
-            <p>BetExplorer all-league fixtures and 1X2 prices are checked against historical odds, team form, league strength, venue records and table pressure before a pick is allowed onto the board.</p>
+            <span className="eyebrow"><Sparkles size={14} /> CHRONOS FUSION 2.5</span>
+            <h1>Six days.<br /><span>Full and provisional intelligence.</span></h1>
+            <p>Full Chronos picks require local league and team history. When that history is not ready, a clearly marked provisional tier can use only strict 1X2 odds patterns—and it can never become a Banker.</p>
             <div className="hero-actions">
               <a className="primary-button" href="#bankers"><Star size={18} />See Today’s Bankers</a>
               <a className="secondary-button" href="#board"><BarChart3 size={18} />Open Full Board</a>
@@ -240,7 +245,7 @@ export default function App() {
               <span><small>Bankers</small><strong>{data.metrics.bankers}</strong></span>
               <span><small>Fixtures checked</small><strong>{data.metrics.fixtures}</strong></span>
               <span><small>Leagues</small><strong>{data.metrics.leagues}</strong></span>
-              <span><small>Upgrades</small><strong>{data.metrics.lowOddsUpgrades}</strong></span>
+              <span><small>Provisional</small><strong>{data.metrics.provisionalPicks}</strong></span>
             </div>
           </div>
         </section>
@@ -262,7 +267,7 @@ export default function App() {
         <section className="metrics-row">
           <article><span><Target /></span><div><small>{selectedLabel.short} qualified picks</small><strong>{datePredictions.length}</strong></div></article>
           <article><span><Trophy /></span><div><small>{selectedLabel.short} bankers</small><strong>{bankers.length}</strong></div></article>
-          <article><span><BrainCircuit /></span><div><small>Engine version</small><strong>2.3</strong></div></article>
+          <article><span><BrainCircuit /></span><div><small>Engine version</small><strong>2.5</strong></div></article>
           <article><span><Activity /></span><div><small>Weak matches rejected</small><strong>{Math.max(0, data.metrics.fixtures - data.metrics.picks)}</strong></div></article>
         </section>
 
@@ -314,11 +319,33 @@ export default function App() {
             <div className="loading-panel"><div className="spinner" /><h3>Chronos is loading the six-day board…</h3></div>
           ) : data.source === 'offline' ? (
             <div className="empty-panel"><Info /><div><h3>The live prediction API is unavailable</h3><p>No demo picks are shown. Check the frontend API URL and Render CORS settings.</p></div></div>
-          ) : datePredictions.length === 0 ? (
+          ) : fullPredictions.length === 0 ? (
             <div className="empty-panel"><ShieldCheck /><div><h3>No qualified picks for {selectedLabel.short.toLowerCase()}</h3><p>This is normal. Betynz will not force a selection when the statistics or odds do not agree.</p></div></div>
           ) : (
             <div className="prediction-grid">
               {regular.map((prediction) => (
+                <PredictionCard
+                  key={prediction.fixtureId}
+                  prediction={prediction}
+                  onExplain={() => setSelectedPrediction(prediction)}
+                  inList={analysisList.has(prediction.fixtureId)}
+                  onToggleList={() => toggleList(prediction.fixtureId)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="content-section provisional-section" id="provisional">
+          <div className="section-heading">
+            <div><span className="eyebrow"><Info size={14} /> LIMITED LOCAL HISTORY</span><h2>Provisional global-odds picks</h2><p>These use complete 1X2 prices and closely matched historical odds profiles. They are medium risk and never qualify as Bankers.</p></div>
+            <span className="board-count">{provisionalPredictions.length} provisional</span>
+          </div>
+          {provisionalPredictions.length === 0 ? (
+            <div className="empty-panel compact"><ShieldCheck /><div><h3>No provisional pick passed for this day</h3><p>The price pattern or model edge was not strong enough.</p></div></div>
+          ) : (
+            <div className="prediction-grid">
+              {provisionalPredictions.map((prediction) => (
                 <PredictionCard
                   key={prediction.fixtureId}
                   prediction={prediction}
@@ -349,7 +376,8 @@ export default function App() {
         <span className="eyebrow">BETYNZ NAVIGATION</span>
         <a href="#top" onClick={() => setMenuOpen(false)}>Overview</a>
         <a href="#bankers" onClick={() => setMenuOpen(false)}>Bankers</a>
-        <a href="#board" onClick={() => setMenuOpen(false)}>Six-day board</a>
+        <a href="#board" onClick={() => setMenuOpen(false)}>Full board</a>
+        <a href="#provisional" onClick={() => setMenuOpen(false)}>Provisional picks</a>
         <a href="#" onClick={() => setMenuOpen(false)}>Chronos Lab</a>
         <a href="#" onClick={() => setMenuOpen(false)}>Proof</a>
       </aside>
@@ -363,6 +391,9 @@ export default function App() {
             <h2>{selectedPrediction.selection}</h2>
             <p className="modal-fixture">{selectedPrediction.homeTeam} vs {selectedPrediction.awayTeam}</p>
             <div className="modal-summary"><ShieldCheck /><p>{selectedPrediction.summary}</p></div>
+            {selectedPrediction.tier === 'provisional' && (
+              <div className="provisional-note"><Info /><div><strong>Provisional selection</strong><p>This pick passed the global 1X2 odds-pattern gate, but local league and team history is not yet deep enough for full Chronos status or Banker eligibility.</p></div></div>
+            )}
             {selectedPrediction.upgraded && (
               <div className="upgrade-note"><TrendingUp /><div><strong>Low-odds upgrade</strong><p>{selectedPrediction.originalMarketLabel} at {selectedPrediction.originalOdds?.toFixed(2)} was below the 1.19 minimum, so the engine tested and approved the stronger market.</p></div></div>
             )}
@@ -371,10 +402,10 @@ export default function App() {
             <div className="evidence-grid">
               <span><small>Historical sample</small><strong>{selectedPrediction.sample}</strong></span>
               <span><small>Historical hit rate</small><strong>{evidenceValue(selectedPrediction, 'historicalHitRate')}%</strong></span>
-              <span><small>Home position</small><strong>{evidenceValue(selectedPrediction, 'homePosition')}</strong></span>
-              <span><small>Away position</small><strong>{evidenceValue(selectedPrediction, 'awayPosition')}</strong></span>
-              <span><small>Home venue PPG</small><strong>{evidenceValue(selectedPrediction, 'homeVenuePpg')}</strong></span>
-              <span><small>Away venue PPG</small><strong>{evidenceValue(selectedPrediction, 'awayVenuePpg')}</strong></span>
+              <span><small>Local league matches</small><strong>{evidenceValue(selectedPrediction, 'localLeagueMatches', evidenceValue(selectedPrediction, 'leagueSample'))}</strong></span>
+              <span><small>Home team history</small><strong>{evidenceValue(selectedPrediction, 'homeTeamHistory', evidenceValue(selectedPrediction, 'homePosition'))}</strong></span>
+              <span><small>Away team history</small><strong>{evidenceValue(selectedPrediction, 'awayTeamHistory', evidenceValue(selectedPrediction, 'awayPosition'))}</strong></span>
+              <span><small>Qualification</small><strong>{selectedPrediction.tier === 'full' ? 'Full' : 'Provisional'}</strong></span>
             </div>
             <h3>Engine checks</h3>
             <div className="engine-detail-list">

@@ -3,11 +3,11 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { z } from 'zod';
-import { allMatches, listMatches, listUpcomingFixtures, sourceName, upsertPredictions, upsertUpcomingFixtures } from './store.js';
+import { allMatches, listMatches, listUpcomingFixtures, sourceName, upsertUpcomingFixtures } from './store.js';
 import { buildOddsBands } from './patterns.js';
 import { importFootballDataUrl } from './importer.js';
-import { ENGINE_VERSION, analyzeFixture } from './engine.js';
-import { getPredictionDashboard, predictionWindow, syncUpcomingPredictions } from './prediction-service.js';
+import { ENGINE_VERSION } from './engine.js';
+import { getPredictionDashboard, predictionWindow, rebuildPredictions, syncUpcomingPredictions } from './prediction-service.js';
 import { providerConfiguration } from './fixture-provider.js';
 import { fetchBetExplorerFixtures, parseBetExplorerHtmlDetailed } from './betexplorer.js';
 
@@ -181,6 +181,9 @@ app.post('/api/v1/admin/parse-betexplorer-html', async (req: express.Request, re
       jsonFixtures: parsed.jsonFixtures,
       fixtures: parsed.fixtures.length,
       fixturesWith1X2: parsed.fixtures.filter((fixture) => fixture.odds.home && fixture.odds.draw && fixture.odds.away).length,
+      fixtureIds: parsed.fixtures.map((fixture) => fixture.id),
+      fixturesWith1X2Ids: parsed.fixtures.filter((fixture) => fixture.odds.home && fixture.odds.draw && fixture.odds.away).map((fixture) => fixture.id),
+      leagues: [...new Set(parsed.fixtures.map((fixture) => `${fixture.country}|${fixture.leagueName}`))].length,
       sample: parsed.fixtures.slice(0, 20)
     });
   } catch (error) { next(error); }
@@ -191,7 +194,9 @@ app.post('/api/v1/admin/ingest-betexplorer-html', async (req: express.Request, r
   try {
     if (!authorizeAdmin(req, res)) return;
     const body = z.object({
-      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       pageUrl: z.string().url().refine((value: string) => {
         const host = new URL(value).hostname;
         return host === 'betexplorer.com' || host.endsWith('.betexplorer.com');
@@ -199,13 +204,16 @@ app.post('/api/v1/admin/ingest-betexplorer-html', async (req: express.Request, r
       html: z.string().min(500).max(4_500_000)
     }).parse(req.body);
 
-    const parsed = parseBetExplorerHtmlDetailed(body.html, body.date, body.pageUrl);
-    const fixtures = parsed.fixtures.filter((fixture) => fixture.date >= body.date && fixture.date <= body.date);
+    const defaults = predictionWindow();
+    const from = body.from || body.date || defaults.from;
+    const to = body.to || body.date || defaults.to;
+    const parsed = parseBetExplorerHtmlDetailed(body.html, from, body.pageUrl, from, to);
+    const fixtures = parsed.fixtures.filter((fixture) => fixture.date >= from && fixture.date <= to);
     const fixturesWith1X2 = fixtures.filter((fixture) => fixture.odds.home && fixture.odds.draw && fixture.odds.away);
 
     if (!fixtures.length) {
       return res.status(422).json({
-        error: 'Rendered BetExplorer page contained no parsable fixtures.',
+        error: 'Rendered BetExplorer page contained no parsable fixtures in the requested window.',
         tableFixtures: parsed.tableFixtures,
         jsonFixtures: parsed.jsonFixtures,
         fixtures: 0,
@@ -214,23 +222,30 @@ app.post('/api/v1/admin/ingest-betexplorer-html', async (req: express.Request, r
     }
 
     await upsertUpcomingFixtures(fixtures);
-    const historicalMatches = await allMatches();
-    const predictions = fixtures
-      .map((fixture) => analyzeFixture(fixture, historicalMatches))
-      .filter((prediction) => prediction !== null);
-    await upsertPredictions(predictions);
-
     return res.json({
-      date: body.date,
+      window: { from, to },
       tableFixtures: parsed.tableFixtures,
       jsonFixtures: parsed.jsonFixtures,
       fixtures: fixtures.length,
       fixturesWith1X2: fixturesWith1X2.length,
       savedFixtures: fixtures.length,
-      predictions: predictions.length,
-      bankers: predictions.filter((prediction) => prediction.banker).length,
+      fixtureIds: fixtures.map((fixture) => fixture.id),
+      fixturesWith1X2Ids: fixturesWith1X2.map((fixture) => fixture.id),
+      leagues: [...new Set(fixtures.map((fixture) => `${fixture.country}|${fixture.leagueName}`))].length,
       sample: fixtures.slice(0, 10)
     });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/v1/admin/rebuild-predictions', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    if (!authorizeAdmin(req, res)) return;
+    const defaults = predictionWindow();
+    const body = z.object({
+      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
+    }).parse(req.body ?? {});
+    res.json(await rebuildPredictions(body.from || defaults.from, body.to || defaults.to));
   } catch (error) { next(error); }
 });
 

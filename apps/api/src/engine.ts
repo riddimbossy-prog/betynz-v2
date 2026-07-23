@@ -2,7 +2,7 @@ import type { NormalizedMatch } from './types.js';
 import type { EngineSignal, MarketKey, PredictionRecord, UpcomingFixture, UpcomingOdds } from './forecast-types.js';
 import { sameLeague, teamKey } from './identity.js';
 
-export const ENGINE_VERSION = 'chronos-fusion-2.2.0';
+export const ENGINE_VERSION = 'chronos-fusion-2.5.0';
 
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value));
 const pct = (wins: number, sample: number, fallback = 0.5) => sample ? wins / sample : fallback;
@@ -695,17 +695,17 @@ function eligible(candidate: Candidate, strict = false) {
     && passedEngines >= (strict ? 4 : 3);
 }
 
-export function analyzeFixture(fixture: UpcomingFixture, allHistoricalMatches: NormalizedMatch[]): PredictionRecord | null {
+function analyzeFullFixture(fixture: UpcomingFixture, allHistoricalMatches: NormalizedMatch[]): PredictionRecord | null {
   const matches = allHistoricalMatches.filter((match) => match.date < fixture.date);
   const leagueMatches = matches.filter((match) => sameLeague(match.leagueName, fixture.leagueName));
-  if (leagueMatches.length < 60) return null;
+  if (leagueMatches.length < 120) return null;
 
   const league = leagueProfile(matches, fixture.leagueName);
   const homeRecent = teamSlice(matches, fixture.homeTeam, 'all', 10);
   const awayRecent = teamSlice(matches, fixture.awayTeam, 'all', 10);
   const homeVenue = teamSlice(matches, fixture.homeTeam, 'home', 10);
   const awayVenue = teamSlice(matches, fixture.awayTeam, 'away', 10);
-  if (homeRecent.matches.length < 4 || awayRecent.matches.length < 4) return null;
+  if (homeRecent.matches.length < 8 || awayRecent.matches.length < 8 || homeVenue.matches.length < 4 || awayVenue.matches.length < 4) return null;
 
   const expected = expectedGoals(league, homeVenue, awayVenue, homeRecent, awayRecent);
   const goalModel = poissonMarkets(expected.home, expected.away);
@@ -716,7 +716,8 @@ export function analyzeFixture(fixture: UpcomingFixture, allHistoricalMatches: N
 
   const baseMarkets: MarketKey[] = [
     'HOME_OVER_05', 'AWAY_OVER_05', 'OVER_15', 'UNDER_35',
-    'DOUBLE_CHANCE_1X', 'DOUBLE_CHANCE_X2', 'OVER_25', 'UNDER_25'
+    'DOUBLE_CHANCE_1X', 'DOUBLE_CHANCE_X2', 'OVER_25', 'UNDER_25',
+    'HOME_WIN', 'AWAY_WIN'
   ];
   const allNeeded = new Set<MarketKey>([...baseMarkets, ...Object.values(upgradeMap).filter(Boolean) as MarketKey[]]);
   const candidates = new Map<MarketKey, Candidate>();
@@ -783,6 +784,8 @@ export function analyzeFixture(fixture: UpcomingFixture, allHistoricalMatches: N
     edge: round(chosen.edge * 100),
     sample: chosen.sample,
     banker,
+    tier: 'full',
+    qualification: 'FULL_CHRONOS',
     risk,
     explanation: chosen.explanation.slice(0, 5),
     summary,
@@ -799,4 +802,155 @@ export function analyzeFixture(fixture: UpcomingFixture, allHistoricalMatches: N
     engines: chosen.engines,
     settledStatus: 'pending'
   };
+}
+
+function provisionalHistoricalNeighbors(matches: NormalizedMatch[], fixture: UpcomingFixture, market: 'HOME_WIN' | 'AWAY_WIN') {
+  const target = fairThreeWay(fixture.odds);
+  if (!target) return { sample: 0, hitRate: 0, averageDistance: 1 };
+  const rows = matches
+    .map((match) => {
+      const fair = openingFair(match);
+      if (!fair) return null;
+      const distance = Math.abs(target.home - fair.home) + Math.abs(target.draw - fair.draw) + Math.abs(target.away - fair.away);
+      return { match, distance };
+    })
+    .filter((row): row is { match: NormalizedMatch; distance: number } => Boolean(row))
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 180);
+  return {
+    sample: rows.length,
+    hitRate: pct(rows.filter((row) => outcome(row.match, market)).length, rows.length, 0.5),
+    averageDistance: average(rows.map((row) => row.distance), 1)
+  };
+}
+
+function countTeamHistory(matches: NormalizedMatch[], team: string) {
+  const key = teamKey(team);
+  return matches.filter((match) => teamKey(match.homeTeam) === key || teamKey(match.awayTeam) === key).length;
+}
+
+function analyzeProvisionalFixture(fixture: UpcomingFixture, allHistoricalMatches: NormalizedMatch[]): PredictionRecord | null {
+  const matches = allHistoricalMatches.filter((match) => match.date < fixture.date && openingFair(match));
+  const fair = fairThreeWay(fixture.odds);
+  if (!fair || !fixture.odds.home || !fixture.odds.draw || !fixture.odds.away) return null;
+
+  const market: 'HOME_WIN' | 'AWAY_WIN' = fair.home >= fair.away ? 'HOME_WIN' : 'AWAY_WIN';
+  const selectedFair = market === 'HOME_WIN' ? fair.home : fair.away;
+  const selectedOdd = market === 'HOME_WIN' ? fixture.odds.home : fixture.odds.away;
+  if (!selectedOdd || selectedOdd < 1.19 || selectedOdd > 1.85 || selectedFair < 0.58) return null;
+
+  const neighbors = provisionalHistoricalNeighbors(matches, fixture, market);
+  if (neighbors.sample < 120 || neighbors.hitRate < 0.54 || neighbors.averageDistance > 0.18) return null;
+
+  const similarity = clamp(1 - neighbors.averageDistance / 0.22);
+  const probability = clamp(selectedFair * 0.65 + neighbors.hitRate * 0.35, 0.05, 0.90);
+  const dataQuality = fixture.dataQuality ?? 60;
+  if (dataQuality < 75) return null;
+
+  const confidence = clamp(
+    20
+    + selectedFair * 42
+    + neighbors.hitRate * 32
+    + similarity * 18,
+    0,
+    86
+  );
+  if (confidence < 72) return null;
+
+  const homeHistory = countTeamHistory(matches, fixture.homeTeam);
+  const awayHistory = countTeamHistory(matches, fixture.awayTeam);
+  const leagueHistory = matches.filter((match) => sameLeague(match.leagueName, fixture.leagueName)).length;
+  const selection = market === 'HOME_WIN' ? `${fixture.homeTeam} to win` : `${fixture.awayTeam} to win`;
+  const favorite = market === 'HOME_WIN' ? fixture.homeTeam : fixture.awayTeam;
+  const fairPercent = round(selectedFair * 100);
+  const hitPercent = round(neighbors.hitRate * 100);
+  const patternFit = round(similarity * 100);
+
+  const engines: EngineSignal[] = [
+    {
+      key: 'chronos',
+      name: 'Historical odds pattern',
+      score: round(neighbors.hitRate * 100),
+      pass: neighbors.sample >= 120 && neighbors.hitRate >= 0.54,
+      note: `${neighbors.sample} closest historical 1X2 price profiles won this side ${hitPercent}% of the time.`
+    },
+    {
+      key: 'athena',
+      name: 'Local team intelligence',
+      score: 35,
+      pass: false,
+      note: `Local league and team history is not deep enough yet, so this pick is provisional and cannot be a Banker.`
+    },
+    {
+      key: 'zeus',
+      name: 'Market strength and value',
+      score: round(clamp((selectedFair - 0.50) * 300 + similarity * 45, 0, 100)),
+      pass: selectedFair >= 0.58 && similarity >= 0.18,
+      note: `The market makes ${favorite} the clear side at about ${fairPercent}% fair probability and the historical price shape is a ${patternFit}% match.`
+    },
+    {
+      key: 'leonidas',
+      name: 'Provisional safety gate',
+      score: round(clamp((1 - neighbors.averageDistance / 0.25) * 70 + dataQuality * 0.30, 0, 100)),
+      pass: selectedOdd >= 1.19 && neighbors.averageDistance <= 0.18 && dataQuality >= 75,
+      note: `Complete 1X2 odds passed the 1.19 minimum and the closest historical prices were sufficiently similar.`
+    }
+  ];
+
+  if (engines.filter((engine) => engine.pass).length < 3) return null;
+
+  return {
+    fixtureId: fixture.id,
+    engineVersion: ENGINE_VERSION,
+    runAt: new Date().toISOString(),
+    date: fixture.date,
+    kickoff: fixture.kickoff,
+    leagueCode: fixture.leagueCode,
+    leagueName: fixture.leagueName,
+    country: fixture.country,
+    homeTeam: fixture.homeTeam,
+    awayTeam: fixture.awayTeam,
+    marketKey: market,
+    marketLabel: market === 'HOME_WIN' ? 'Home win' : 'Away win',
+    selection,
+    odds: round(selectedOdd, 2),
+    upgraded: false,
+    probability: round(probability * 100),
+    confidence: round(confidence),
+    edge: 0,
+    sample: neighbors.sample,
+    banker: false,
+    tier: 'provisional',
+    qualification: 'PROVISIONAL_GLOBAL_ODDS',
+    risk: 'Medium',
+    explanation: [
+      `BetExplorer prices make ${favorite} the clear favourite at ${selectedOdd.toFixed(2)}.`,
+      `${neighbors.sample} closely matched historical 1X2 price profiles produced this result ${hitPercent}% of the time.`,
+      `The blended market-and-history probability is ${round(probability * 100)}%, with a ${patternFit}% price-pattern fit.`,
+      `This is provisional because Betynz does not yet have enough local ${fixture.leagueName} and team history.`,
+      `Provisional picks are never promoted to the Banker section.`
+    ],
+    summary: `Provisional odds pick: ${selection} is supported by ${neighbors.sample} similar historical 1X2 price profiles, but local league and team history is still limited.`,
+    evidence: {
+      tier: 'provisional',
+      historicalHitRate: hitPercent,
+      marketFairProbability: fairPercent,
+      oddsPatternFit: patternFit,
+      marketEdgeAvailable: false,
+      averageOddsDistance: round(neighbors.averageDistance, 3),
+      localLeagueMatches: leagueHistory,
+      homeTeamHistory: homeHistory,
+      awayTeamHistory: awayHistory,
+      fixtureProvider: fixture.provider ?? 'unknown',
+      oddsSource: fixture.oddsSource ?? fixture.provider ?? 'unknown',
+      dataQuality,
+      lowOddsUpgrade: false
+    },
+    engines,
+    settledStatus: 'pending'
+  };
+}
+
+export function analyzeFixture(fixture: UpcomingFixture, allHistoricalMatches: NormalizedMatch[]): PredictionRecord | null {
+  return analyzeFullFixture(fixture, allHistoricalMatches) ?? analyzeProvisionalFixture(fixture, allHistoricalMatches);
 }

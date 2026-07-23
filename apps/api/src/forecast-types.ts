@@ -73,6 +73,8 @@ export type EngineSignal = {
   note: string;
 };
 
+export type PredictionTier = 'full' | 'provisional';
+
 export type PredictionRecord = {
   fixtureId: string;
   engineVersion: string;
@@ -97,6 +99,8 @@ export type PredictionRecord = {
   edge: number;
   sample: number;
   banker: boolean;
+  tier: PredictionTier;
+  qualification: string;
   risk: 'Low' | 'Medium';
   explanation: string[];
   summary: string;
@@ -113,8 +117,11 @@ export type PredictionDashboard = {
   metrics: {
     fixtures: number;
     picks: number;
+    fullPicks: number;
+    provisionalPicks: number;
     bankers: number;
     leagues: number;
+    pickLeagues: number;
     lowOddsUpgrades: number;
   };
   bankers: PredictionRecord[];

@@ -140,6 +140,8 @@ export async function upsertPredictions(predictions: PredictionRecord[]) {
     edge: prediction.edge,
     sample: prediction.sample,
     banker: prediction.banker,
+    tier: prediction.tier,
+    qualification: prediction.qualification,
     risk: prediction.risk,
     explanation: prediction.explanation,
     summary: prediction.summary,
@@ -153,6 +155,18 @@ export async function upsertPredictions(predictions: PredictionRecord[]) {
     if (error) throw error;
   }
   return rows.length;
+}
+
+
+export async function clearPredictionsForWindow(from: string, to: string, engineVersion: string) {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from('predictions')
+    .delete()
+    .eq('engine_version', engineVersion)
+    .gte('match_date', from)
+    .lte('match_date', to);
+  if (error) throw error;
 }
 
 export async function listPredictions(from: string, to: string, bankerOnly = false): Promise<PredictionRecord[]> {
@@ -265,6 +279,8 @@ function dbToPrediction(row: any): PredictionRecord {
     edge: Number(row.edge),
     sample: Number(row.sample),
     banker: Boolean(row.banker),
+    tier: row.tier === 'provisional' ? 'provisional' : 'full',
+    qualification: row.qualification ?? (row.tier === 'provisional' ? 'PROVISIONAL_GLOBAL_ODDS' : 'FULL_CHRONOS'),
     risk: row.risk,
     explanation: Array.isArray(row.explanation) ? row.explanation : [],
     summary: row.summary,

@@ -30,6 +30,8 @@ export type Prediction = {
   edge: number;
   sample: number;
   banker: boolean;
+  tier: 'full' | 'provisional';
+  qualification: string;
   risk: 'Low' | 'Medium';
   explanation: string[];
   summary: string;
@@ -45,8 +47,11 @@ export type PredictionDashboard = {
   metrics: {
     fixtures: number;
     picks: number;
+    fullPicks: number;
+    provisionalPicks: number;
     bankers: number;
     leagues: number;
+    pickLeagues: number;
     lowOddsUpgrades: number;
   };
   bankers: Prediction[];

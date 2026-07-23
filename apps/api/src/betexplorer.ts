@@ -226,6 +226,23 @@ function splitLeagueTitle(raw: string) {
   return { country: '', league: title || 'Unknown league' };
 }
 
+
+function titleCaseSlug(value: string) {
+  return value.split('-').filter(Boolean).map((part) => part ? part[0].toUpperCase() + part.slice(1) : part).join(' ');
+}
+
+function leagueFromPageUrl(pageUrl: string) {
+  try {
+    const parts = new URL(pageUrl, BASE_URL).pathname.split('/').filter(Boolean);
+    if (parts[0] === 'football' && parts.length >= 3) {
+      return { country: titleCaseSlug(parts[1]), league: titleCaseSlug(parts[2]) };
+    }
+  } catch {
+    // Ignore URL parsing failures.
+  }
+  return { country: '', league: 'Unknown league' };
+}
+
 function findSectionTitle($: cheerio.CheerioAPI, row: cheerio.Cheerio<any>) {
   const directLeague = cleanText(row.attr('data-league') || row.attr('data-competition') || row.attr('data-tournament'));
   const directCountry = cleanText(row.attr('data-country'));
@@ -235,7 +252,14 @@ function findSectionTitle($: cheerio.CheerioAPI, row: cheerio.Cheerio<any>) {
 
   // Current BetExplorer fixture tables use a preceding tr.js-tournament header.
   const tournamentRow = row.prevAll('tr.js-tournament').first();
-  const tournamentTitle = cleanText(tournamentRow.find('.table-main__tournament').first().text() || tournamentRow.text());
+  const tournamentLink = tournamentRow.find('.table-main__tournament a, a[href*="/football/"]').first();
+  const tournamentTitle = cleanText(
+    tournamentLink.attr('title')
+    || tournamentLink.text()
+    || tournamentRow.find('.table-main__tournament').first().text()
+    || tournamentRow.attr('data-tournament')
+    || tournamentRow.text()
+  );
   if (tournamentTitle) return tournamentTitle;
 
   const section = row.closest('.wrap-section, .league, .competition, .tournament, section, [data-league]');
@@ -409,7 +433,7 @@ function makeFixture(input: {
   } satisfies UpcomingFixture;
 }
 
-function parseTableFixtures(html: string, fallbackDate: string, pageUrl: string) {
+function parseTableFixtures(html: string, fallbackDate: string, pageUrl: string, from = fallbackDate, to = fallbackDate) {
   const $ = cheerio.load(html);
   const selectors = [
     'table.table-main tr[data-dt]',
@@ -436,12 +460,17 @@ function parseTableFixtures(html: string, fallbackDate: string, pageUrl: string)
     const teams = parseTeams($, row);
     if (!teams) continue;
     const date = rowDate($, row, fallbackDate);
-    // BetExplorer pages may also contain yesterday's settled results.
-    if (date !== fallbackDate) continue;
+    // League pages can contain several rounds. Keep only the requested prediction window.
+    if (date < from || date > to) continue;
 
     const time = parseTime($, row);
     const title = findSectionTitle($, row);
-    const { country, league } = splitLeagueTitle(title);
+    const parsedLeague = splitLeagueTitle(title);
+    const urlLeague = leagueFromPageUrl(pageUrl);
+    const country = parsedLeague.country || urlLeague.country;
+    const league = !parsedLeague.league || /^(unknown league|fixtures|results|matches)$/i.test(parsedLeague.league)
+      ? urlLeague.league
+      : parsedLeague.league;
     const matchUrl = parseMatchUrl($, row, pageUrl);
     const sourceIdentity = cleanText(
       row.attr('data-event-id')
@@ -616,8 +645,8 @@ function mergeParsedFixtures(fixtures: UpcomingFixture[]) {
   return [...map.values()];
 }
 
-export function parseBetExplorerHtmlDetailed(html: string, fallbackDate: string, pageUrl = BASE_URL): ParsedPage {
-  const table = parseTableFixtures(html, fallbackDate, pageUrl);
+export function parseBetExplorerHtmlDetailed(html: string, fallbackDate: string, pageUrl = BASE_URL, from = fallbackDate, to = fallbackDate): ParsedPage {
+  const table = parseTableFixtures(html, fallbackDate, pageUrl, from, to);
   const json = parseJsonFixtures(html, fallbackDate, pageUrl);
   return {
     fixtures: mergeParsedFixtures([...table, ...json]),

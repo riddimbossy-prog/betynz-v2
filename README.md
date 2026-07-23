@@ -1,22 +1,20 @@
-# Betynz Chronos Fusion v2.3
+# Betynz Chronos Fusion v2.5
 
-Betynz prediction platform for **today plus the next five days**, with BetExplorer as the primary all-league fixture and visible 1X2 odds feed.
+Betynz prediction platform for **today plus the next five days**, using BetExplorer browser-rendered fixtures and visible 1X2 prices.
 
-## Main features
+## What v2.5 adds
 
-- BetExplorer fixture discovery across available countries and leagues
-- Visible Home/Draw/Away odds ingestion
-- Chronos historical-odds engine
-- Four-engine approval: Chronos, Athena, Zeus and Leonidas
-- One best market per fixture; weak matches return no pick
-- Low-odds upgrade rule: selections below 1.19 must pass a stronger related market
-- Daily Banker section with up to three strict picks
-- Simple-English statistical explanations
-- League profile, form, strength, venue, table position and late-season pressure
-- Automatic sync every four hours
-- Automatic settlement after historical result imports
-- Responsive desktop, mobile, tablet and Z Fold interface
-- Installable PWA
+- Controlled competition-page crawling for future fixtures across the six-day window
+- Country and league names carried into every fixture
+- **Full Chronos** selections when local league, team, venue and historical odds data are ready
+- **Provisional global-odds** selections when local history is limited
+- Provisional selections are clearly marked, medium risk and can never be Bankers
+- Banker section remains restricted to fully qualified 4/4-engine selections
+- One best market per fixture
+- Low-odds rule: prices below 1.19 require a validated stronger market; otherwise the match is rejected
+- Simple-English explanation for every published pick
+- Fixture-league counts are based on imported fixtures, not only qualified picks
+- Predictions are rebuilt once after the complete browser crawl, avoiding stale or duplicated engine runs
 
 ## Main endpoints
 
@@ -24,8 +22,9 @@ Betynz prediction platform for **today plus the next five days**, with BetExplor
 - `GET /api/v1/upcoming-fixtures`
 - `GET /api/v1/predictions`
 - `GET /api/v1/bankers?date=YYYY-MM-DD`
-- `POST /api/v1/admin/test-betexplorer`
 - `POST /api/v1/admin/parse-betexplorer-html`
+- `POST /api/v1/admin/ingest-betexplorer-html`
+- `POST /api/v1/admin/rebuild-predictions`
 - `POST /api/v1/admin/sync-upcoming`
 
-Start with `docs/BETEXPLORER_PRIMARY_V2_3.md`.
+Install `supabase/migrations/004_prediction_tiers.sql`, then follow `docs/UPGRADE_TO_V2_5.md`.
