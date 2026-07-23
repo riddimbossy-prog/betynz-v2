@@ -221,9 +221,9 @@ export default function App() {
       <main id="top">
         <section className="hero">
           <div className="hero-copy">
-            <span className="eyebrow"><Sparkles size={14} /> CHRONOS FUSION 2.2</span>
+            <span className="eyebrow"><Sparkles size={14} /> CHRONOS FUSION 2.3</span>
             <h1>Six days.<br /><span>Only qualified picks.</span></h1>
-            <p>Historical odds, team form, league strength, venue records and table pressure—combined before a pick is allowed onto the board.</p>
+            <p>BetExplorer all-league fixtures and 1X2 prices are checked against historical odds, team form, league strength, venue records and table pressure before a pick is allowed onto the board.</p>
             <div className="hero-actions">
               <a className="primary-button" href="#bankers"><Star size={18} />See Today’s Bankers</a>
               <a className="secondary-button" href="#board"><BarChart3 size={18} />Open Full Board</a>
@@ -262,7 +262,7 @@ export default function App() {
         <section className="metrics-row">
           <article><span><Target /></span><div><small>{selectedLabel.short} qualified picks</small><strong>{datePredictions.length}</strong></div></article>
           <article><span><Trophy /></span><div><small>{selectedLabel.short} bankers</small><strong>{bankers.length}</strong></div></article>
-          <article><span><BrainCircuit /></span><div><small>Engine version</small><strong>2.2</strong></div></article>
+          <article><span><BrainCircuit /></span><div><small>Engine version</small><strong>2.3</strong></div></article>
           <article><span><Activity /></span><div><small>Weak matches rejected</small><strong>{Math.max(0, data.metrics.fixtures - data.metrics.picks)}</strong></div></article>
         </section>
 

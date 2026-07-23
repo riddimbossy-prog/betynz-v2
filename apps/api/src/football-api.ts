@@ -120,6 +120,15 @@ function isoDate(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
+function datesBetween(from: string, to: string) {
+  const dates: string[] = [];
+  const end = new Date(`${to}T12:00:00Z`);
+  for (const cursor = new Date(`${from}T12:00:00Z`); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    dates.push(isoDate(cursor));
+  }
+  return dates;
+}
+
 function buildId(providerFixtureId: number) {
   return createHash('sha1').update(`api-football|${providerFixtureId}`).digest('hex').slice(0, 20);
 }
@@ -159,8 +168,13 @@ export async function fetchUpcomingFixtures(from: string, to: string): Promise<U
       fixtureResponses.push(...(payload?.response ?? []));
     }
   } else {
-    const payload = await apiGet(`/fixtures?from=${from}&to=${to}&timezone=UTC`);
-    fixtureResponses.push(...(payload?.response ?? []));
+    // API-Football's reliable all-league discovery path is one calendar date at a time.
+    // A bare from/to query can be rejected or return no data when no league is supplied.
+    const timezone = process.env.API_FOOTBALL_TIMEZONE?.trim() || process.env.PREDICTION_TIMEZONE?.trim() || 'Africa/Accra';
+    for (const date of datesBetween(from, to)) {
+      const payload = await apiGet(`/fixtures?date=${encodeURIComponent(date)}&timezone=${encodeURIComponent(timezone)}`);
+      fixtureResponses.push(...(payload?.response ?? []));
+    }
   }
 
   const dates: string[] = [];

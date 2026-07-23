@@ -1,4 +1,4 @@
-name: Test BetExplorer fixture feed
+name: Test BetExplorer browser feed
 
 on:
   workflow_dispatch:
@@ -15,19 +15,36 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - name: Call protected BetExplorer test endpoint
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install browser runner
+        run: |
+          npm install --no-save playwright@1.54.1
+          npx playwright install --with-deps chromium
+
+      - name: Render BetExplorer and test parser
         env:
           API_URL: ${{ secrets.BETYNZ_API_URL }}
           ADMIN_TOKEN: ${{ secrets.BETYNZ_ADMIN_IMPORT_TOKEN }}
           FROM_DATE: ${{ inputs.from }}
           TO_DATE: ${{ inputs.to }}
-        run: |
-          test -n "$API_URL" && test -n "$ADMIN_TOKEN"
-          BODY=$(printf '{"from":"%s","to":"%s"}' "$FROM_DATE" "$TO_DATE")
-          curl --fail --silent --show-error \
-            -X POST "$API_URL/api/v1/admin/test-betexplorer" \
-            -H "content-type: application/json" \
-            -H "x-admin-token: $ADMIN_TOKEN" \
-            --data "$BODY" | tee betexplorer-report.json
-          python -m json.tool betexplorer-report.json
+          DRY_RUN: 'true'
+          PREDICTION_DAYS: '6'
+          PREDICTION_TIMEZONE: Africa/Accra
+        run: node scripts/betexplorer-browser-sync.mjs
+
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: betexplorer-browser-test-report
+          path: betexplorer-browser-report.json
+          if-no-files-found: warn

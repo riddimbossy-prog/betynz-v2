@@ -3,13 +3,13 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { z } from 'zod';
-import { allMatches, listMatches, listUpcomingFixtures, sourceName } from './store.js';
+import { allMatches, listMatches, listUpcomingFixtures, sourceName, upsertPredictions, upsertUpcomingFixtures } from './store.js';
 import { buildOddsBands } from './patterns.js';
 import { importFootballDataUrl } from './importer.js';
-import { ENGINE_VERSION } from './engine.js';
+import { ENGINE_VERSION, analyzeFixture } from './engine.js';
 import { getPredictionDashboard, predictionWindow, syncUpcomingPredictions } from './prediction-service.js';
 import { providerConfiguration } from './fixture-provider.js';
-import { fetchBetExplorerFixtures } from './betexplorer.js';
+import { fetchBetExplorerFixtures, parseBetExplorerHtmlDetailed } from './betexplorer.js';
 
 const app = express();
 const port = Number(process.env.PORT || 8787);
@@ -17,7 +17,7 @@ const origins = (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',')
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors({ origin: origins, methods: ['GET', 'POST'] }));
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '5mb' }));
 
 app.get('/api/v1/health', (_req: express.Request, res: express.Response) => res.json({
   ok: true,
@@ -163,6 +163,74 @@ app.post('/api/v1/admin/test-betexplorer', async (req: express.Request, res: exp
     const body = z.object({ from: z.string().optional(), to: z.string().optional() }).parse(req.body ?? {});
     const result = await fetchBetExplorerFixtures(body.from || defaults.from, body.to || defaults.to);
     res.json({ report: result.report, sample: result.fixtures.slice(0, 20) });
+  } catch (error) { next(error); }
+});
+
+
+app.post('/api/v1/admin/parse-betexplorer-html', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    if (!authorizeAdmin(req, res)) return;
+    const body = z.object({
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      pageUrl: z.string().url().optional(),
+      html: z.string().min(500).max(4_500_000)
+    }).parse(req.body);
+    const parsed = parseBetExplorerHtmlDetailed(body.html, body.date, body.pageUrl || 'https://www.betexplorer.com/football/');
+    res.json({
+      tableFixtures: parsed.tableFixtures,
+      jsonFixtures: parsed.jsonFixtures,
+      fixtures: parsed.fixtures.length,
+      fixturesWith1X2: parsed.fixtures.filter((fixture) => fixture.odds.home && fixture.odds.draw && fixture.odds.away).length,
+      sample: parsed.fixtures.slice(0, 20)
+    });
+  } catch (error) { next(error); }
+});
+
+
+app.post('/api/v1/admin/ingest-betexplorer-html', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    if (!authorizeAdmin(req, res)) return;
+    const body = z.object({
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      pageUrl: z.string().url().refine((value: string) => {
+        const host = new URL(value).hostname;
+        return host === 'betexplorer.com' || host.endsWith('.betexplorer.com');
+      }, 'Only BetExplorer URLs are allowed.'),
+      html: z.string().min(500).max(4_500_000)
+    }).parse(req.body);
+
+    const parsed = parseBetExplorerHtmlDetailed(body.html, body.date, body.pageUrl);
+    const fixtures = parsed.fixtures.filter((fixture) => fixture.date >= body.date && fixture.date <= body.date);
+    const fixturesWith1X2 = fixtures.filter((fixture) => fixture.odds.home && fixture.odds.draw && fixture.odds.away);
+
+    if (!fixtures.length) {
+      return res.status(422).json({
+        error: 'Rendered BetExplorer page contained no parsable fixtures.',
+        tableFixtures: parsed.tableFixtures,
+        jsonFixtures: parsed.jsonFixtures,
+        fixtures: 0,
+        fixturesWith1X2: 0
+      });
+    }
+
+    await upsertUpcomingFixtures(fixtures);
+    const historicalMatches = await allMatches();
+    const predictions = fixtures
+      .map((fixture) => analyzeFixture(fixture, historicalMatches))
+      .filter((prediction) => prediction !== null);
+    await upsertPredictions(predictions);
+
+    return res.json({
+      date: body.date,
+      tableFixtures: parsed.tableFixtures,
+      jsonFixtures: parsed.jsonFixtures,
+      fixtures: fixtures.length,
+      fixturesWith1X2: fixturesWith1X2.length,
+      savedFixtures: fixtures.length,
+      predictions: predictions.length,
+      bankers: predictions.filter((prediction) => prediction.banker).length,
+      sample: fixtures.slice(0, 10)
+    });
   } catch (error) { next(error); }
 });
 

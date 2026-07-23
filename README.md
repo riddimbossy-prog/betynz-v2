@@ -1,47 +1,31 @@
-# Betynz Multi-League Chronos Fusion v2.2
+# Betynz Chronos Fusion v2.3
 
-Betynz v2.2 supplies a six-day prediction board for all football leagues available to the configured providers.
+Betynz prediction platform for **today plus the next five days**, with BetExplorer as the primary all-league fixture and visible 1X2 odds feed.
 
-## Current data architecture
+## Main features
 
-- **BetExplorer collector:** public fixture pages and the 1X2 odds visible with each fixture.
-- **API-Football fallback/enrichment:** stable fixture IDs, kickoff metadata and extended markets.
-- **Football-Data historical imports:** settled results and historical odds used by Chronos.
-- **Supabase:** normalized fixtures, odds, predictions and settlements.
-- **Render:** private API and public React frontend.
-
-The collector does not bypass login, CAPTCHA, rate limits or access controls. BetExplorer HTML and current usage terms must be reviewed before enabling it in production. Its selectors and URL template are configurable because websites can change.
-
-## All-league behavior
-
-Leave `API_FOOTBALL_LEAGUE_IDS` blank. A value such as `39` intentionally limits the feed to the EPL.
-
-Set:
-
-```env
-FIXTURE_PROVIDER=hybrid
-BETEXPLORER_ENABLED=true
-API_FOOTBALL_LEAGUE_IDS=
-```
-
-Hybrid mode prefers BetExplorer's visible 1X2 prices and fills extended markets from API-Football. It also includes unmatched fixtures from either provider.
+- BetExplorer fixture discovery across available countries and leagues
+- Visible Home/Draw/Away odds ingestion
+- Chronos historical-odds engine
+- Four-engine approval: Chronos, Athena, Zeus and Leonidas
+- One best market per fixture; weak matches return no pick
+- Low-odds upgrade rule: selections below 1.19 must pass a stronger related market
+- Daily Banker section with up to three strict picks
+- Simple-English statistical explanations
+- League profile, form, strength, venue, table position and late-season pressure
+- Automatic sync every four hours
+- Automatic settlement after historical result imports
+- Responsive desktop, mobile, tablet and Z Fold interface
+- Installable PWA
 
 ## Main endpoints
 
 - `GET /api/v1/providers/status`
-- `GET /api/v1/upcoming-fixtures?from=YYYY-MM-DD&to=YYYY-MM-DD`
-- `GET /api/v1/upcoming-fixtures?country=Ghana&oddsOnly=true`
+- `GET /api/v1/upcoming-fixtures`
 - `GET /api/v1/predictions`
 - `GET /api/v1/bankers?date=YYYY-MM-DD`
 - `POST /api/v1/admin/test-betexplorer`
+- `POST /api/v1/admin/parse-betexplorer-html`
 - `POST /api/v1/admin/sync-upcoming`
 
-## Database migrations
-
-Run in order:
-
-1. `001_schema.sql`
-2. `002_prediction_engine.sql`
-3. `003_multileague_providers.sql`
-
-Read `docs/BETEXPLORER_MULTI_LEAGUE_SETUP.md` before deployment.
+Start with `docs/BETEXPLORER_PRIMARY_V2_3.md`.

@@ -17,7 +17,7 @@ export type ProviderSyncReport = {
 let lastReport: ProviderSyncReport | null = null;
 
 function mode(): FixtureProviderMode {
-  const value = String(process.env.FIXTURE_PROVIDER || 'hybrid').toLowerCase();
+  const value = String(process.env.FIXTURE_PROVIDER || 'betexplorer').toLowerCase();
   return value === 'betexplorer' || value === 'api-football' ? value : 'hybrid';
 }
 
@@ -158,6 +158,7 @@ export async function fetchMultiLeagueUpcomingFixtures(from: string, to: string)
           enabled: false,
           requestedPages: 0,
           parsedFixtures: 0,
+          fixturesWith1X2: 0,
           pages: [],
           warnings: []
         }
@@ -203,7 +204,6 @@ export async function fetchMultiLeagueUpcomingFixtures(from: string, to: string)
   if (apiError) warnings.push(apiError);
   if (selectedMode === 'hybrid' && !betExplorerResult.fixtures.length) warnings.push('Hybrid mode continued with API-Football because BetExplorer returned no usable fixtures.');
   if (selectedMode === 'hybrid' && !apiFixtures.length) warnings.push('Hybrid mode continued with BetExplorer-only fixtures because API-Football returned no usable fixtures.');
-  if (!fixtures.length) throw new Error(`No upcoming fixtures were returned by configured providers. ${warnings.join(' ')}`.trim());
 
   lastReport = {
     mode: selectedMode,
@@ -215,6 +215,10 @@ export async function fetchMultiLeagueUpcomingFixtures(from: string, to: string)
     unmatchedApiFootball: merged.unmatchedApiFootball,
     warnings
   };
+
+  if (!fixtures.length) {
+    throw new Error(`No upcoming fixtures were returned. API-Football: ${apiError || '0 fixtures'}. BetExplorer: ${betExplorerResult.report.parsedFixtures} parsed. Check /api/v1/providers/status for the retained diagnostics.`);
+  }
 
   return { fixtures, report: lastReport };
 }
