@@ -17,6 +17,24 @@ services:
         sync: false
       - key: ADMIN_IMPORT_TOKEN
         generateValue: true
+      - key: ODDS_API_KEY
+        sync: false
+      - key: ODDS_API_BASE_URL
+        value: https://api.the-odds-api.com/v4
+      - key: ODDS_API_FALLBACK_ENABLED
+        value: true
+      - key: ODDS_API_FALLBACK_MIN_FIXTURES
+        value: 80
+      - key: ODDS_API_FALLBACK_MIN_EXTENDED_FIXTURES
+        value: 30
+      - key: ODDS_API_REGIONS
+        value: eu,uk
+      - key: ODDS_API_MARKETS
+        value: h2h,totals
+      - key: ODDS_API_MAX_SPORTS
+        value: 45
+      - key: ODDS_API_CONCURRENCY
+        value: 3
       - key: API_FOOTBALL_KEY
         sync: false
       - key: API_FOOTBALL_BASE_URL
@@ -48,6 +66,8 @@ services:
       - key: PREDICTION_TIMEZONE
         value: Africa/Accra
       - key: ATHENA_SHADOW_ENABLED
+        value: true
+      - key: ATHENA_PUBLIC_ENABLED
         value: true
       - key: ATHENA_HISTORY_LIMIT
         value: 24

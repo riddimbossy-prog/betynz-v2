@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { z } from 'zod';
-import { allMatches, listMatches, listRejectedBattles, listUpcomingFixtures, sourceName, upsertStreakSnapshots, upsertUpcomingFixtures } from './store.js';
+import { allMatches, listMatches, listRejectedBattles, listUpcomingFixtures, sourceName, upsertMatches, upsertStreakSnapshots, upsertUpcomingFixtures } from './store.js';
 import { buildOddsBands } from './patterns.js';
 import { importFootballDataUrl } from './importer.js';
 import { ENGINE_VERSION } from './engine.js';
@@ -13,6 +13,7 @@ import { getPredictionDashboard, predictionWindow, rebuildPredictions, syncUpcom
 import { providerConfiguration } from './fixture-provider.js';
 import { fetchBetExplorerFixtures, parseBetExplorerHtmlDetailed } from './betexplorer.js';
 import { parseBetExplorerStreakHtml } from './betexplorer-streaks.js';
+import { enrichHistoricalMatchesWithOddsApi } from './odds-api.js';
 
 const app = express();
 const port = Number(process.env.PORT || 8787);
@@ -27,7 +28,7 @@ app.get('/api/v1/health', (_req: express.Request, res: express.Response) => res.
   service: 'betynz-api',
   source: sourceName(),
   engineVersion: ENGINE_VERSION,
-  athenaTransition: { version: ATHENA_ENGINE_VERSION, mode: ATHENA_ENGINE_MODE, enabled: String(process.env.ATHENA_SHADOW_ENABLED ?? 'true').toLowerCase() !== 'false' },
+  athenaTransition: { version: ATHENA_ENGINE_VERSION, mode: ATHENA_ENGINE_MODE, enabled: String(process.env.ATHENA_SHADOW_ENABLED ?? 'true').toLowerCase() !== 'false', publicEnabled: String(process.env.ATHENA_PUBLIC_ENABLED ?? 'true').toLowerCase() !== 'false' },
   predictionWindow: predictionWindow(),
   providers: providerConfiguration(),
   time: new Date().toISOString()
@@ -80,7 +81,7 @@ app.get('/api/v1/upcoming-fixtures', async (req: express.Request, res: express.R
       to: z.string().optional(),
       league: z.string().optional(),
       country: z.string().optional(),
-      provider: z.enum(['api-football', 'betexplorer', 'hybrid']).optional(),
+      provider: z.enum(['api-football', 'betexplorer', 'odds-api', 'hybrid']).optional(),
       oddsOnly: z.coerce.boolean().optional(),
       limit: z.coerce.number().min(1).max(5000).default(5000)
     }).parse(req.query);
@@ -122,7 +123,7 @@ app.get('/api/v1/dashboard', async (_req: express.Request, res: express.Response
       source: sourceName(),
       lastUpdated: new Date().toISOString(),
       engineVersion: ENGINE_VERSION,
-      athenaTransition: { version: ATHENA_ENGINE_VERSION, mode: ATHENA_ENGINE_MODE, enabled: String(process.env.ATHENA_SHADOW_ENABLED ?? 'true').toLowerCase() !== 'false' },
+      athenaTransition: { version: ATHENA_ENGINE_VERSION, mode: ATHENA_ENGINE_MODE, enabled: String(process.env.ATHENA_SHADOW_ENABLED ?? 'true').toLowerCase() !== 'false', publicEnabled: String(process.env.ATHENA_PUBLIC_ENABLED ?? 'true').toLowerCase() !== 'false' },
       metrics: {
         matches: matches.length,
         leagues,
@@ -199,6 +200,20 @@ app.get('/api/v1/admin/rejected-battles', async (req: express.Request, res: expr
     const to = query.to || defaults.to;
     const battles = await listRejectedBattles(from, to, query.limit, ENGINE_VERSION);
     res.json({ source: sourceName(), window: { from, to }, count: battles.length, battles });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/v1/admin/backfill-odds-api-history', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    if (!authorizeAdmin(req, res)) return;
+    const body = z.object({
+      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+    }).parse(req.body ?? {});
+    const existing = (await allMatches()).filter((match) => match.date >= body.from && match.date <= body.to);
+    const result = await enrichHistoricalMatchesWithOddsApi(existing, body.from, body.to);
+    const imported = result.enriched ? await upsertMatches(result.updated) : 0;
+    res.json({ window: { from: body.from, to: body.to }, matches: existing.length, enriched: result.enriched, imported, snapshots: result.snapshots, requests: result.requests });
   } catch (error) { next(error); }
 });
 

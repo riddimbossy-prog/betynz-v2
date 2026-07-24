@@ -1,7 +1,7 @@
 {
   "name": "betynz-chronos-fusion",
   "private": true,
-  "version": "2.8.0",
+  "version": "2.9.0",
   "workspaces": [
     "apps/web",
     "apps/api"
@@ -14,7 +14,9 @@
     "test:engine": "npm run test:engine -w apps/api",
     "test:betexplorer-parser": "npm run test:betexplorer-parser -w apps/api",
     "test:streak-parser": "npm run test:streak-parser -w apps/api",
-    "test:athena": "npm run test:athena -w apps/api"
+    "test:athena": "npm run test:athena -w apps/api",
+    "test:odds-api": "npm run test:odds-api -w apps/api",
+    "test:v2.9": "node scripts/verify-v2.9.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

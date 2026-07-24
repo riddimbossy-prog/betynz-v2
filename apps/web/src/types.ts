@@ -1,7 +1,7 @@
 
 export type UpcomingFixture = {
   id: string;
-  provider?: 'api-football' | 'betexplorer' | 'hybrid';
+  provider?: 'api-football' | 'betexplorer' | 'odds-api' | 'hybrid';
   providerUrl?: string;
   oddsSource?: string;
   dataQuality?: number;
@@ -65,6 +65,26 @@ export type Prediction = {
   settledStatus?: 'pending' | 'won' | 'lost' | 'void';
 };
 
+
+export type AthenaPublicPick = {
+  fixtureId: string;
+  engineVersion: string;
+  date: string;
+  kickoff: string;
+  leagueCode: string;
+  leagueName: string;
+  country: string;
+  homeTeam: string;
+  awayTeam: string;
+  selection: string;
+  marketKey: string;
+  score: number;
+  banker: boolean;
+  odds?: number;
+  statsLine: string;
+  settledStatus?: 'pending' | 'won' | 'lost' | 'void';
+};
+
 export type PredictionDashboard = {
   source: 'supabase' | 'demo' | 'offline';
   generatedAt: string;
@@ -86,10 +106,12 @@ export type PredictionDashboard = {
     athenaShadowRuns: number;
     athenaShadowPicks: number;
     athenaShadowBankers: number;
+    athenaPublicPicks: number;
   };
   bankers: Prediction[];
   predictions: Prediction[];
   zeusAutoPicks: Prediction[];
+  athenaPicks: AthenaPublicPick[];
   radarFixtures: UpcomingFixture[];
 };
 

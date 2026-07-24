@@ -17,7 +17,8 @@ import {
   replaceAthenaShadowRuns,
   upsertUpcomingFixtures
 } from './store.js';
-import type { PredictionDashboard } from './forecast-types.js';
+import type { AthenaPublicPick, PredictionDashboard, UpcomingFixture } from './forecast-types.js';
+import type { AthenaShadowRun } from './athena-types.js';
 
 let lazyRebuildPromise: Promise<void> | null = null;
 let lastLazyRebuildAttempt = 0;
@@ -33,6 +34,48 @@ function addDays(date: string, days: number) {
   const value = new Date(`${date}T12:00:00Z`);
   value.setUTCDate(value.getUTCDate() + days);
   return value.toISOString().slice(0, 10);
+}
+
+function percent(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${Math.round(number * 100)}%` : null;
+}
+
+function athenaStatsLine(run: AthenaShadowRun) {
+  const home = run.metrics?.home;
+  const away = run.metrics?.away;
+  const parts: string[] = [];
+  const homeUnder = percent(home?.under25Rate);
+  const awayUnder = percent(away?.under25Rate);
+  const homeHtDraw = percent(home?.htDrawRate);
+  const awayHtDraw = percent(away?.htDrawRate);
+  if (homeUnder && awayUnder) parts.push(`U2.5 ${homeUnder} / ${awayUnder}`);
+  if (homeHtDraw && awayHtDraw) parts.push(`HT draw ${homeHtDraw} / ${awayHtDraw}`);
+  if (parts.length < 2 && Number.isFinite(Number(home?.averageTotalGoals)) && Number.isFinite(Number(away?.averageTotalGoals))) {
+    parts.push(`Avg goals ${Number(home.averageTotalGoals).toFixed(1)} / ${Number(away.averageTotalGoals).toFixed(1)}`);
+  }
+  return parts.slice(0, 2).join(' · ') || `Athena score ${Math.round(run.score)}%`;
+}
+
+function athenaMarketOdd(run: AthenaShadowRun, fixture?: UpcomingFixture) {
+  if (!fixture) return undefined;
+  const odds = fixture.odds;
+  const map: Record<string, number | undefined> = {
+    HOME_DNB: odds.homeDnb, AWAY_DNB: odds.awayDnb, HOME_OR_DRAW: odds.dc1x, AWAY_OR_DRAW: odds.dcx2,
+    HOME_TEAM_OVER_0_5: odds.homeOver05, AWAY_TEAM_OVER_0_5: odds.awayOver05, OVER_1_5: odds.over15,
+    OVER_2_5: odds.over25, UNDER_2_5: odds.under25, UNDER_3_5: odds.under35, FULL_TIME_DRAW: odds.draw
+  };
+  const value = map[run.marketKey];
+  return value && Number.isFinite(value) ? value : undefined;
+}
+
+function toAthenaPublicPick(run: AthenaShadowRun, fixture?: UpcomingFixture): AthenaPublicPick {
+  return {
+    fixtureId: run.fixtureId, engineVersion: run.engineVersion, date: run.date, kickoff: run.kickoff,
+    leagueCode: run.leagueCode, leagueName: run.leagueName, country: run.country, homeTeam: run.homeTeam, awayTeam: run.awayTeam,
+    selection: run.marketLabel, marketKey: run.marketKey, score: run.score, banker: run.banker, odds: athenaMarketOdd(run, fixture),
+    statsLine: athenaStatsLine(run), settledStatus: run.settledStatus
+  };
 }
 
 export function predictionWindow(days = Number(process.env.PREDICTION_DAYS || 6)) {
@@ -135,6 +178,14 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
   const radarFixtures = fixtures
     .filter((fixture) => Boolean(fixture.odds.home && fixture.odds.draw && fixture.odds.away))
     .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+  const fixtureById = new Map(fixtures.map((fixture) => [fixture.id, fixture]));
+  const athenaPublicEnabled = String(process.env.ATHENA_PUBLIC_ENABLED ?? 'true').toLowerCase() !== 'false';
+  const athenaPicks = athenaPublicEnabled
+    ? athenaShadowRuns
+        .filter((run) => run.marketKey !== ATHENA_MARKETS.NO_PICK)
+        .map((run) => toAthenaPublicPick(run, fixtureById.get(run.fixtureId)))
+        .sort((a, b) => a.kickoff.localeCompare(b.kickoff))
+    : [];
   const currentEnginePredictions = allPredictions.filter((prediction) => prediction.engineVersion === ENGINE_VERSION);
   const fallbackEngineVersion = currentEnginePredictions.length === 0
     ? [...allPredictions].sort((a, b) => b.runAt.localeCompare(a.runAt))[0]?.engineVersion
@@ -176,11 +227,13 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
       zeusAutoPicks: zeusAutoPicks.length,
       athenaShadowRuns: athenaShadowRuns.length,
       athenaShadowPicks: athenaShadowRuns.filter((run) => run.marketKey !== ATHENA_MARKETS.NO_PICK).length,
-      athenaShadowBankers: athenaShadowRuns.filter((run) => run.banker).length
+      athenaShadowBankers: athenaShadowRuns.filter((run) => run.banker).length,
+      athenaPublicPicks: athenaPicks.length
     },
     bankers,
     predictions: sorted,
     zeusAutoPicks,
+    athenaPicks,
     radarFixtures
   };
 }

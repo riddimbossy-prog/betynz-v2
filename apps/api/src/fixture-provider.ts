@@ -1,5 +1,6 @@
 import { fetchUpcomingFixtures as fetchApiFootballFixtures } from './football-api.js';
 import { betExplorerConfiguration, fetchBetExplorerFixtures, type BetExplorerSyncReport } from './betexplorer.js';
+import { fetchOddsApiFixtures, oddsApiConfiguration } from './odds-api.js';
 import type { UpcomingFixture, UpcomingOdds } from './forecast-types.js';
 
 export type FixtureProviderMode = 'api-football' | 'betexplorer' | 'hybrid';
@@ -8,6 +9,7 @@ export type ProviderSyncReport = {
   fixtures: number;
   apiFootball: { enabled: boolean; fixtures: number; error?: string };
   betExplorer: BetExplorerSyncReport;
+  oddsApi: { enabled: boolean; usedAsFallback: boolean; fixtures: number; fixturesWith1X2: number; requests: number; error?: string; warnings: string[] };
   matchedAcrossProviders: number;
   unmatchedBetExplorer: number;
   unmatchedApiFootball: number;
@@ -133,6 +135,40 @@ function mergeFixtures(apiFixtures: UpcomingFixture[], betFixtures: UpcomingFixt
   };
 }
 
+
+function mergeOddsApiFallback(existingFixtures: UpcomingFixture[], oddsFixtures: UpcomingFixture[]) {
+  const aliasMap = aliases();
+  const usedFallback = new Set<number>();
+  const output = existingFixtures.map((existing) => {
+    let bestIndex = -1;
+    let bestScore = 0;
+    for (let index = 0; index < oddsFixtures.length; index += 1) {
+      if (usedFallback.has(index)) continue;
+      const fallback = oddsFixtures[index];
+      if (!sameFixture(existing, fallback, aliasMap)) continue;
+      const score = diceSimilarity(canonicalName(existing.homeTeam, aliasMap), canonicalName(fallback.homeTeam, aliasMap))
+        + diceSimilarity(canonicalName(existing.awayTeam, aliasMap), canonicalName(fallback.awayTeam, aliasMap));
+      if (score > bestScore) { bestScore = score; bestIndex = index; }
+    }
+    if (bestIndex < 0) return existing;
+    const fallback = oddsFixtures[bestIndex];
+    usedFallback.add(bestIndex);
+    return {
+      ...existing,
+      provider: 'hybrid' as const,
+      oddsSource: `${existing.oddsSource || existing.provider || 'primary'}+odds-api`,
+      dataQuality: Math.min(100, Math.max(existing.dataQuality || 60, fallback.dataQuality || 70) + 4),
+      odds: { ...fallback.odds, ...existing.odds },
+      rawOdds: { primary: existing.rawOdds ?? null, oddsApi: fallback.rawOdds ?? null },
+      updatedAt: new Date().toISOString()
+    };
+  });
+  for (let index = 0; index < oddsFixtures.length; index += 1) {
+    if (!usedFallback.has(index)) output.push(oddsFixtures[index]);
+  }
+  return { fixtures: output, matched: usedFallback.size, added: oddsFixtures.length - usedFallback.size };
+}
+
 function filterFixtures(fixtures: UpcomingFixture[]) {
   const excludedCountries = new Set((process.env.EXCLUDED_COUNTRIES || '').split(',').map((value: string) => normalizeName(value)).filter(Boolean));
   const excludedLeagues = new Set((process.env.EXCLUDED_LEAGUE_IDS || '').split(',').map((value: string) => value.trim()).filter(Boolean));
@@ -198,9 +234,31 @@ export async function fetchMultiLeagueUpcomingFixtures(from: string, to: string)
         unmatchedApiFootball: selectedMode === 'api-football' ? apiFixtures.length : 0
       };
 
-  const fixtures = filterFixtures(merged.fixtures)
+  const fallbackEnabled = String(process.env.ODDS_API_FALLBACK_ENABLED ?? 'true').toLowerCase() !== 'false';
+  const fallbackThreshold = Math.max(1, Number(process.env.ODDS_API_FALLBACK_MIN_FIXTURES || 80));
+  const extendedThreshold = Math.max(0, Number(process.env.ODDS_API_FALLBACK_MIN_EXTENDED_FIXTURES || 30));
+  const completePrimary = merged.fixtures.filter((fixture) => fixture.odds.home && fixture.odds.draw && fixture.odds.away).length;
+  const completeExtended = merged.fixtures.filter((fixture) => fixture.odds.over25 && fixture.odds.under25).length;
+  let oddsApiFixtures: UpcomingFixture[] = [];
+  let oddsApiError: string | undefined;
+  let oddsApiReport = { enabled: Boolean(process.env.ODDS_API_KEY?.trim()), usedAsFallback: false, fixtures: 0, fixturesWith1X2: 0, requests: 0, warnings: [] as string[] };
+  if (fallbackEnabled && process.env.ODDS_API_KEY?.trim() && (completePrimary < fallbackThreshold || completeExtended < extendedThreshold)) {
+    try {
+      const result = await fetchOddsApiFixtures(from, to, true);
+      oddsApiFixtures = result.fixtures;
+      oddsApiReport = {
+        enabled: result.report.enabled, usedAsFallback: true, fixtures: result.report.fixtures,
+        fixturesWith1X2: result.report.fixturesWith1X2, requests: result.report.requests, warnings: result.report.warnings
+      };
+    } catch (error) {
+      oddsApiError = error instanceof Error ? error.message : String(error);
+      oddsApiReport = { ...oddsApiReport, usedAsFallback: true, warnings: [oddsApiError] };
+    }
+  }
+  const oddsMerged = oddsApiFixtures.length ? mergeOddsApiFallback(merged.fixtures, oddsApiFixtures) : { fixtures: merged.fixtures, matched: 0, added: 0 };
+  const fixtures = filterFixtures(oddsMerged.fixtures)
     .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
-  const warnings = [...betExplorerResult.report.warnings];
+  const warnings = [...betExplorerResult.report.warnings, ...oddsApiReport.warnings];
   if (apiError) warnings.push(apiError);
   if (selectedMode === 'hybrid' && !betExplorerResult.fixtures.length) warnings.push('Hybrid mode continued with API-Football because BetExplorer returned no usable fixtures.');
   if (selectedMode === 'hybrid' && !apiFixtures.length) warnings.push('Hybrid mode continued with BetExplorer-only fixtures because API-Football returned no usable fixtures.');
@@ -210,6 +268,7 @@ export async function fetchMultiLeagueUpcomingFixtures(from: string, to: string)
     fixtures: fixtures.length,
     apiFootball: { enabled: selectedMode !== 'betexplorer', fixtures: apiFixtures.length, error: apiError },
     betExplorer: betExplorerResult.report,
+    oddsApi: { ...oddsApiReport, error: oddsApiError },
     matchedAcrossProviders: merged.matched,
     unmatchedBetExplorer: merged.unmatchedBetExplorer,
     unmatchedApiFootball: merged.unmatchedApiFootball,
@@ -217,7 +276,7 @@ export async function fetchMultiLeagueUpcomingFixtures(from: string, to: string)
   };
 
   if (!fixtures.length) {
-    throw new Error(`No upcoming fixtures were returned. API-Football: ${apiError || '0 fixtures'}. BetExplorer: ${betExplorerResult.report.parsedFixtures} parsed. Check /api/v1/providers/status for the retained diagnostics.`);
+    throw new Error(`No upcoming fixtures were returned. API-Football: ${apiError || '0 fixtures'}. BetExplorer: ${betExplorerResult.report.parsedFixtures} parsed. Odds API: ${oddsApiError || oddsApiReport.fixtures + ' fixtures'}. Check /api/v1/providers/status.`);
   }
 
   return { fixtures, report: lastReport };
@@ -232,6 +291,7 @@ export function providerConfiguration() {
       selectedLeagueIds: (process.env.API_FOOTBALL_LEAGUE_IDS || '').split(',').map((value: string) => value.trim()).filter(Boolean)
     },
     betExplorer: betExplorerConfiguration(),
+    oddsApi: oddsApiConfiguration(),
     lastReport
   };
 }

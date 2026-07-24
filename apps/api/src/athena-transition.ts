@@ -1,6 +1,6 @@
 export const ATHENA_ENGINE_NAME = 'Athena Transition Engine';
 export const ATHENA_ENGINE_VERSION = 'athena-transition-1.0.0-rc.1';
-export const ATHENA_ENGINE_MODE = 'FROZEN_SHADOW' as const;
+export const ATHENA_ENGINE_MODE = 'FROZEN_PUBLIC_RC1' as const;
 
 export const ATHENA_CLASSIFICATIONS = {
   STABLE_LEADER: 'STABLE_LEADER',

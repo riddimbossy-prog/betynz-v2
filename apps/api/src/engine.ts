@@ -3,7 +3,7 @@ import type { EngineSignal, FixtureBattleResult, MarketKey, PredictionRecord, Re
 import { sameLeague, teamKey } from './identity.js';
 import { buildFixtureStreakIntelligence, toConfrontationRecord, type FixtureStreakIntelligence, type TeamStreakSnapshot } from './streak-intelligence.js';
 
-export const ENGINE_VERSION = 'zeus-chronos-fusion-2.8.0';
+export const ENGINE_VERSION = 'zeus-athena-public-2.9.0';
 
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value));
 const pct = (wins: number, sample: number, fallback = 0.5) => sample ? wins / sample : fallback;

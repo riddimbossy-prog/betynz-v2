@@ -1,3 +1,7 @@
+# Archived v2.8 note
+
+> Superseded by Betynz v2.9. Athena is now displayed publicly in frozen RC1 mode. See `docs/UPGRADE_TO_V2_9.md`.
+
 # Athena Transition Engine v1.0-RC1 in Betynz v2.8
 
 Athena runs in **FROZEN_SHADOW** mode. It evaluates every upcoming fixture but does not publish its selections to normal users yet.

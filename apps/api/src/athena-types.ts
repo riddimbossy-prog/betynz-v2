@@ -43,7 +43,7 @@ export type AthenaShadowDashboard = {
   source: 'supabase' | 'demo';
   generatedAt: string;
   engineVersion: string;
-  mode: 'FROZEN_SHADOW';
+  mode: 'FROZEN_PUBLIC_RC1';
   window: { from: string; to: string };
   metrics: {
     fixtures: number;
