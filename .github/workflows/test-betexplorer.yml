@@ -41,6 +41,7 @@ jobs:
           PREDICTION_TIMEZONE: Africa/Accra
           BETEXPLORER_TEST_LEAGUE_PAGES: '2'
           BETEXPLORER_BROWSER_RATE_MS: '1800'
+          BETEXPLORER_INTELLIGENCE_TAB_LIMIT: '2'
         run: node scripts/betexplorer-browser-sync.mjs
 
       - name: Upload browser diagnostics

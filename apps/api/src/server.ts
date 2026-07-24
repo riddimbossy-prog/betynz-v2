@@ -3,17 +3,18 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { z } from 'zod';
-import { allMatches, listMatches, listUpcomingFixtures, sourceName, upsertUpcomingFixtures } from './store.js';
+import { allMatches, listMatches, listRejectedBattles, listUpcomingFixtures, sourceName, upsertStreakSnapshots, upsertUpcomingFixtures } from './store.js';
 import { buildOddsBands } from './patterns.js';
 import { importFootballDataUrl } from './importer.js';
 import { ENGINE_VERSION } from './engine.js';
 import { getPredictionDashboard, predictionWindow, rebuildPredictions, syncUpcomingPredictions } from './prediction-service.js';
 import { providerConfiguration } from './fixture-provider.js';
 import { fetchBetExplorerFixtures, parseBetExplorerHtmlDetailed } from './betexplorer.js';
+import { parseBetExplorerStreakHtml } from './betexplorer-streaks.js';
 
 const app = express();
 const port = Number(process.env.PORT || 8787);
-const origins = (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',').map((value) => value.trim()).filter(Boolean);
+const origins = (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',').map((value: string) => value.trim()).filter(Boolean);
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors({ origin: origins, methods: ['GET', 'POST'] }));
@@ -142,6 +143,22 @@ function authorizeAdmin(req: express.Request, res: express.Response) {
   return true;
 }
 
+app.get('/api/v1/admin/rejected-battles', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    if (!authorizeAdmin(req, res)) return;
+    const defaults = predictionWindow();
+    const query = z.object({
+      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      limit: z.coerce.number().min(1).max(2000).default(500)
+    }).parse(req.query);
+    const from = query.from || defaults.from;
+    const to = query.to || defaults.to;
+    const battles = await listRejectedBattles(from, to, query.limit, ENGINE_VERSION);
+    res.json({ source: sourceName(), window: { from, to }, count: battles.length, battles });
+  } catch (error) { next(error); }
+});
+
 app.post('/api/v1/admin/import', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   try {
     if (!authorizeAdmin(req, res)) return;
@@ -234,6 +251,40 @@ app.post('/api/v1/admin/ingest-betexplorer-html', async (req: express.Request, r
       leagues: [...new Set(fixtures.map((fixture) => `${fixture.country}|${fixture.leagueName}`))].length,
       sample: fixtures.slice(0, 10)
     });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/v1/admin/parse-betexplorer-streak-html', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    if (!authorizeAdmin(req, res)) return;
+    const body = z.object({
+      snapshotDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      pageUrl: z.string().url().refine((value: string) => {
+        const host = new URL(value).hostname;
+        return host === 'betexplorer.com' || host.endsWith('.betexplorer.com');
+      }, 'Only BetExplorer URLs are allowed.'),
+      html: z.string().min(500).max(4_500_000)
+    }).parse(req.body);
+    const parsed = parseBetExplorerStreakHtml(body.html, body.pageUrl, body.snapshotDate);
+    res.json({ tables: parsed.tables, rows: parsed.rows, snapshots: parsed.snapshots.length, warnings: parsed.warnings, sample: parsed.snapshots.slice(0, 20) });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/v1/admin/ingest-betexplorer-streak-html', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    if (!authorizeAdmin(req, res)) return;
+    const body = z.object({
+      snapshotDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      pageUrl: z.string().url().refine((value: string) => {
+        const host = new URL(value).hostname;
+        return host === 'betexplorer.com' || host.endsWith('.betexplorer.com');
+      }, 'Only BetExplorer URLs are allowed.'),
+      html: z.string().min(500).max(4_500_000)
+    }).parse(req.body);
+    const parsed = parseBetExplorerStreakHtml(body.html, body.pageUrl, body.snapshotDate);
+    if (!parsed.snapshots.length) return res.status(422).json({ error: 'No streak or HT/FT rows were recognized.', ...parsed });
+    const saved = await upsertStreakSnapshots(parsed.snapshots);
+    res.json({ tables: parsed.tables, rows: parsed.rows, snapshots: parsed.snapshots.length, saved, warnings: parsed.warnings, sample: parsed.snapshots.slice(0, 20) });
   } catch (error) { next(error); }
 });
 

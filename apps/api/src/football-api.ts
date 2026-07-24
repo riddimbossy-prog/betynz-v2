@@ -156,7 +156,7 @@ async function fetchOddsForDate(date: string) {
 export async function fetchUpcomingFixtures(from: string, to: string): Promise<UpcomingFixture[]> {
   const configuredLeagueIds = (process.env.API_FOOTBALL_LEAGUE_IDS || '')
     .split(',')
-    .map((value) => value.trim())
+    .map((value: string) => value.trim())
     .filter(Boolean);
 
   const fixtureResponses: any[] = [];

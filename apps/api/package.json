@@ -1,7 +1,7 @@
 {
   "name": "@betynz/api",
   "private": true,
-  "version": "2.6.0",
+  "version": "2.7.0",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "import:local": "tsx src/import-local.ts",
     "test:engine": "tsx src/engine-smoke.ts",
-    "test:betexplorer-parser": "tsx src/betexplorer-smoke.ts"
+    "test:betexplorer-parser": "tsx src/betexplorer-smoke.ts",
+    "test:streak-parser": "tsx src/streak-parser-smoke.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",

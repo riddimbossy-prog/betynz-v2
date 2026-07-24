@@ -1,3 +1,5 @@
+import type { ConfrontationRecord, TeamStreakSnapshot } from './streak-intelligence.js';
+
 export type MarketKey =
   | 'HOME_OVER_05'
   | 'AWAY_OVER_05'
@@ -110,6 +112,39 @@ export type PredictionRecord = {
   settledAt?: string;
 };
 
+export type RejectedCandidate = {
+  marketKey: string;
+  marketLabel: string;
+  odds: number | null;
+  reason: string;
+};
+
+export type RejectedBattle = {
+  fixtureId: string;
+  engineVersion: string;
+  runAt: string;
+  date: string;
+  kickoff: string;
+  leagueCode: string;
+  leagueName: string;
+  country: string;
+  homeTeam: string;
+  awayTeam: string;
+  rejectionStage: 'data' | 'history' | 'zeus-competition' | 'low-odds-upgrade' | 'leonidas';
+  topMarket: string | null;
+  topOdds: number | null;
+  reasons: string[];
+  candidates: RejectedCandidate[];
+  evidence: Record<string, string | number | boolean | null>;
+};
+
+export type FixtureBattleResult = {
+  prediction: PredictionRecord | null;
+  rejection: RejectedBattle | null;
+  snapshots: TeamStreakSnapshot[];
+  confrontation: ConfrontationRecord | null;
+};
+
 export type PredictionDashboard = {
   source: 'supabase' | 'demo';
   generatedAt: string;
@@ -124,8 +159,10 @@ export type PredictionDashboard = {
     pickLeagues: number;
     lowOddsUpgrades: number;
     pricedFixtures: number;
+    zeusAutoPicks: number;
   };
   bankers: PredictionRecord[];
   predictions: PredictionRecord[];
+  zeusAutoPicks: PredictionRecord[];
   radarFixtures: UpcomingFixture[];
 };

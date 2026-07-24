@@ -1,8 +1,9 @@
 import type { NormalizedMatch } from './types.js';
-import type { EngineSignal, MarketKey, PredictionRecord, UpcomingFixture, UpcomingOdds } from './forecast-types.js';
+import type { EngineSignal, FixtureBattleResult, MarketKey, PredictionRecord, RejectedBattle, UpcomingFixture, UpcomingOdds } from './forecast-types.js';
 import { sameLeague, teamKey } from './identity.js';
+import { buildFixtureStreakIntelligence, toConfrontationRecord, type FixtureStreakIntelligence, type TeamStreakSnapshot } from './streak-intelligence.js';
 
-export const ENGINE_VERSION = 'chronos-fusion-2.6.0';
+export const ENGINE_VERSION = 'zeus-chronos-fusion-2.7.0';
 
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value));
 const pct = (wins: number, sample: number, fallback = 0.5) => sample ? wins / sample : fallback;
@@ -412,6 +413,32 @@ const upgradeMap: Partial<Record<MarketKey, MarketKey>> = {
   AWAY_DNB: 'AWAY_WIN'
 };
 
+function marketStreakBias(market: MarketKey, intelligence: FixtureStreakIntelligence) {
+  switch (market) {
+    case 'HOME_WIN':
+    case 'HOME_DNB':
+    case 'DOUBLE_CHANCE_1X':
+      return intelligence.biases.home - intelligence.biases.away * 0.35;
+    case 'AWAY_WIN':
+    case 'AWAY_DNB':
+    case 'DOUBLE_CHANCE_X2':
+      return intelligence.biases.away - intelligence.biases.home * 0.35;
+    case 'OVER_25':
+      return intelligence.biases.over25 - intelligence.biases.under25 * 0.45;
+    case 'UNDER_25':
+    case 'UNDER_35':
+      return intelligence.biases.under25 - intelligence.biases.over25 * 0.35;
+    case 'OVER_15':
+      return intelligence.biases.over25 * 0.7 - intelligence.biases.under25 * 0.2;
+    case 'HOME_OVER_05':
+    case 'HOME_OVER_15':
+      return intelligence.biases.home * 0.45 + intelligence.biases.over25 * 0.55;
+    case 'AWAY_OVER_05':
+    case 'AWAY_OVER_15':
+      return intelligence.biases.away * 0.45 + intelligence.biases.over25 * 0.55;
+  }
+}
+
 type Candidate = {
   market: MarketKey;
   probability: number;
@@ -425,6 +452,8 @@ type Candidate = {
   contradiction: number;
   dataCompleteness: number;
   teamConfirmation: number;
+  streakConfirmation: number;
+  zeusBattleScore: number;
   explanation: string[];
   evidence: Record<string, string | number | boolean | null>;
   engines: EngineSignal[];
@@ -441,7 +470,8 @@ function evaluateMarket(
   awayVenue: TeamSlice,
   poisson: ReturnType<typeof poissonMarkets>,
   homeMotivation: ReturnType<typeof motivation>,
-  awayMotivation: ReturnType<typeof motivation>
+  awayMotivation: ReturnType<typeof motivation>,
+  streakIntelligence: FixtureStreakIntelligence
 ): Candidate | null {
   const odd = marketOdd(fixture.odds, market);
   const fair = marketFair(fixture.odds, market);
@@ -613,37 +643,66 @@ function evaluateMarket(
       break;
   }
 
-  const components = [teamModel, leagueRate, poissonRate, venueSignal, neighbors.hitRate];
-  const probability = clamp(teamModel * 0.27 + leagueRate * 0.13 + poissonRate * 0.23 + venueSignal * 0.17 + neighbors.hitRate * 0.20, 0.04, 0.96);
+  const rawStreakBias = marketStreakBias(market, streakIntelligence);
+  const streakConfirmation = clamp(0.5 + rawStreakBias * 3.2, 0.18, 0.86);
+  const components = [teamModel, leagueRate, poissonRate, venueSignal, neighbors.hitRate, streakConfirmation];
+  const probability = clamp(
+    teamModel * 0.23
+    + leagueRate * 0.11
+    + poissonRate * 0.21
+    + venueSignal * 0.15
+    + neighbors.hitRate * 0.18
+    + streakConfirmation * 0.12,
+    0.04,
+    0.96
+  );
   const edge = probability - fair;
   const disagreement = standardDeviation(components);
-  const contradiction = clamp(disagreement * 210 + (edge < 0 ? Math.abs(edge) * 120 : 0), 0, 100);
-  const dataCompleteness = clamp((homeRecent.matches.length + awayRecent.matches.length + homeVenue.matches.length + awayVenue.matches.length) / 32, 0, 1);
-  const teamConfirmation = clamp((teamModel + venueSignal + poissonRate) / 3);
+  const contradiction = clamp(
+    disagreement * 205
+    + (edge < 0 ? Math.abs(edge) * 120 : 0)
+    + streakIntelligence.contradictionPenalty,
+    0,
+    100
+  );
+  const streakSamplesReady = streakIntelligence.home.sample >= 4 && streakIntelligence.away.sample >= 4;
+  const htftSamplesReady = streakIntelligence.home.htft.sample >= 4 && streakIntelligence.away.htft.sample >= 4;
+  const dataCompleteness = clamp(
+    (homeRecent.matches.length + awayRecent.matches.length + homeVenue.matches.length + awayVenue.matches.length) / 32
+    + (streakSamplesReady ? 0.05 : 0)
+    + (htftSamplesReady ? 0.05 : 0),
+    0,
+    1
+  );
+  const teamConfirmation = clamp((teamModel + venueSignal + poissonRate + streakConfirmation) / 4);
   const confidence = clamp(
-    probability * 48
-    + neighbors.hitRate * 16
-    + (1 - disagreement) * 10
+    probability * 45
+    + neighbors.hitRate * 15
+    + (1 - disagreement) * 9
     + dataCompleteness * 10
     + teamConfirmation * 10
-    + clamp(edge + 0.05, 0, 0.15) / 0.15 * 6
+    + streakIntelligence.compatibility / 100 * 6
+    + clamp(edge + 0.05, 0, 0.15) / 0.15 * 7
     - contradiction * 0.12,
     0,
     99
   );
 
-  const chronosScore = clamp(neighbors.hitRate * 70 + (1 - neighbors.averageDistance) * 30, 0, 100);
-  const athenaScore = clamp(teamConfirmation * 100, 0, 100);
-  const zeusScore = clamp((probability * 0.65 + clamp(edge + 0.12, 0, 0.24) / 0.24 * 0.35) * 100, 0, 100);
-  const leonidasScore = clamp(100 - contradiction + dataCompleteness * 8, 0, 100);
+  const chronosScore = clamp(neighbors.hitRate * 68 + (1 - neighbors.averageDistance) * 32, 0, 100);
+  const athenaScore = clamp(teamConfirmation * 78 + streakIntelligence.compatibility * 0.22, 0, 100);
+  const zeusScore = clamp((probability * 0.58 + clamp(edge + 0.12, 0, 0.24) / 0.24 * 0.30 + streakConfirmation * 0.12) * 100, 0, 100);
+  const leonidasScore = clamp(100 - contradiction + dataCompleteness * 8 - streakIntelligence.contradictionPenalty * 0.6, 0, 100);
+  const zeusBattleScore = confidence + edge * 70 + zeusScore * 0.12 + streakIntelligence.compatibility * 0.04 - contradiction * 0.08;
   const engines: EngineSignal[] = [
-    { key: 'chronos', name: 'Chronos', score: round(chronosScore), pass: neighbors.sample >= 60 && chronosScore >= 66, note: `${neighbors.sample} similar historical matches` },
-    { key: 'athena', name: 'Athena', score: round(athenaScore), pass: athenaScore >= 68, note: 'Team form and venue statistics' },
-    { key: 'zeus', name: 'Zeus', score: round(zeusScore), pass: edge >= 0.015 && zeusScore >= 66, note: `Market edge ${edge >= 0 ? '+' : ''}${round(edge * 100)}%` },
-    { key: 'leonidas', name: 'Leonidas', score: round(leonidasScore), pass: contradiction <= 34 && dataCompleteness >= 0.55, note: contradiction <= 22 ? 'Strict filter clear' : 'Some conflicting signals' }
+    { key: 'chronos', name: 'Chronos', score: round(chronosScore), pass: neighbors.sample >= 60 && chronosScore >= 66, note: `${neighbors.sample} closest historical odds profiles produced a ${round(neighbors.hitRate * 100)}% hit rate.` },
+    { key: 'athena', name: 'Athena', score: round(athenaScore), pass: athenaScore >= 68 && streakSamplesReady && htftSamplesReady, note: htftSamplesReady ? `Form, venue, O/U 2.5 streaks and HT/FT splits were statistically checked.` : `Streak samples exist, but the HT/FT sample is not yet deep enough.` },
+    { key: 'zeus', name: 'Zeus', score: round(zeusScore), pass: edge >= 0.015 && zeusScore >= 66, note: `Zeus market battle score ${round(zeusBattleScore)} with ${edge >= 0 ? '+' : ''}${round(edge * 100)}% edge.` },
+    { key: 'leonidas', name: 'Leonidas', score: round(leonidasScore), pass: contradiction <= 34 && dataCompleteness >= 0.55 && streakIntelligence.contradictionPenalty <= 22, note: contradiction <= 22 ? 'No major statistical or streak conflict survived the rejection gate.' : 'Some signals still conflict.' }
   ];
 
   explanation.push(`In ${neighbors.sample} similar historical odds profiles, this market landed ${Math.round(neighbors.hitRate * 100)}% of the time.`);
+  if (streakIntelligence.strongestSignal) explanation.push(streakIntelligence.strongestSignal.note);
+  explanation.push(`The opponent-adjusted streak check rates this confrontation ${Math.round(streakIntelligence.compatibility)}% compatible.`);
   if (homeMotivation.label !== 'normal' || awayMotivation.label !== 'normal') {
     const pressureTeam = homeMotivation.label !== 'normal' ? fixture.homeTeam : fixture.awayTeam;
     const pressure = homeMotivation.label !== 'normal' ? homeMotivation.label : awayMotivation.label;
@@ -663,6 +722,8 @@ function evaluateMarket(
     contradiction,
     dataCompleteness,
     teamConfirmation,
+    streakConfirmation,
+    zeusBattleScore,
     explanation,
     evidence: {
       leagueType: league.tag,
@@ -676,9 +737,27 @@ function evaluateMarket(
       homeMotivation: homeMotivation.label,
       awayMotivation: awayMotivation.label,
       historicalHitRate: round(neighbors.hitRate * 100),
+      historicalOddsDistance: round(neighbors.averageDistance, 3),
       modelProbability: round(probability * 100),
       marketFairProbability: round(fair * 100),
-      contradictionScore: round(contradiction)
+      contradictionScore: round(contradiction),
+      confrontationCompatibility: round(streakIntelligence.compatibility),
+      confrontationSignal: streakIntelligence.strongestSignal?.label ?? 'No strong streak confrontation',
+      homeUnbeatenStreak: streakIntelligence.home.streaks.unbeaten,
+      awayUnbeatenStreak: streakIntelligence.away.streaks.unbeaten,
+      homeNoWinStreak: streakIntelligence.home.streaks.noWin,
+      awayNoWinStreak: streakIntelligence.away.streaks.noWin,
+      homeNoDrawStreak: streakIntelligence.home.streaks.noDraw,
+      awayNoDrawStreak: streakIntelligence.away.streaks.noDraw,
+      homeOver25Streak: streakIntelligence.home.streaks.over25,
+      awayOver25Streak: streakIntelligence.away.streaks.over25,
+      homeUnder25Streak: streakIntelligence.home.streaks.under25,
+      awayUnder25Streak: streakIntelligence.away.streaks.under25,
+      homeHtFtSample: streakIntelligence.home.htft.sample,
+      awayHtFtSample: streakIntelligence.away.htft.sample,
+      homeLeadToWinRate: streakIntelligence.home.htft.leadToWinRate,
+      awayLeadToWinRate: streakIntelligence.away.htft.leadToWinRate,
+      zeusBattleScore: round(zeusBattleScore)
     },
     engines
   };
@@ -695,7 +774,11 @@ function eligible(candidate: Candidate, strict = false) {
     && passedEngines >= (strict ? 4 : 3);
 }
 
-function analyzeFullFixture(fixture: UpcomingFixture, allHistoricalMatches: NormalizedMatch[]): PredictionRecord | null {
+function analyzeFullFixture(
+  fixture: UpcomingFixture,
+  allHistoricalMatches: NormalizedMatch[],
+  suppliedStreakIntelligence?: FixtureStreakIntelligence
+): PredictionRecord | null {
   const matches = allHistoricalMatches.filter((match) => match.date < fixture.date);
   const leagueMatches = matches.filter((match) => sameLeague(match.leagueName, fixture.leagueName));
   if (leagueMatches.length < 120) return null;
@@ -713,6 +796,7 @@ function analyzeFullFixture(fixture: UpcomingFixture, allHistoricalMatches: Norm
   const table = standings(currentSeason);
   const homeMotivation = motivation(table, fixture.homeTeam);
   const awayMotivation = motivation(table, fixture.awayTeam);
+  const streakIntelligence = suppliedStreakIntelligence ?? buildFixtureStreakIntelligence(fixture, matches);
 
   const baseMarkets: MarketKey[] = [
     'HOME_OVER_05', 'AWAY_OVER_05', 'OVER_15', 'UNDER_35',
@@ -722,14 +806,14 @@ function analyzeFullFixture(fixture: UpcomingFixture, allHistoricalMatches: Norm
   const allNeeded = new Set<MarketKey>([...baseMarkets, ...Object.values(upgradeMap).filter(Boolean) as MarketKey[]]);
   const candidates = new Map<MarketKey, Candidate>();
   for (const market of allNeeded) {
-    const candidate = evaluateMarket(market, fixture, matches, league, homeRecent, awayRecent, homeVenue, awayVenue, goalModel, homeMotivation, awayMotivation);
+    const candidate = evaluateMarket(market, fixture, matches, league, homeRecent, awayRecent, homeVenue, awayVenue, goalModel, homeMotivation, awayMotivation, streakIntelligence);
     if (candidate) candidates.set(market, candidate);
   }
 
   const ranked = baseMarkets
     .map((market) => candidates.get(market))
     .filter((candidate): candidate is Candidate => Boolean(candidate) && eligible(candidate!))
-    .sort((a, b) => (b.confidence + b.edge * 65) - (a.confidence + a.edge * 65));
+    .sort((a, b) => b.zeusBattleScore - a.zeusBattleScore || b.confidence - a.confidence);
 
   let chosen = ranked[0];
   if (!chosen) return null;
@@ -755,10 +839,18 @@ function analyzeFullFixture(fixture: UpcomingFixture, allHistoricalMatches: Norm
   }
 
   const passedEngines = chosen.engines.filter((engine) => engine.pass).length;
-  const banker = eligible(chosen, true) && chosen.confidence >= 82 && passedEngines === 4 && chosen.odd >= 1.19;
+  const banker = eligible(chosen, true)
+    && chosen.confidence >= 82
+    && passedEngines === 4
+    && chosen.odd >= 1.19
+    && streakIntelligence.compatibility >= 68
+    && streakIntelligence.contradictionPenalty <= 14
+    && streakIntelligence.home.sample >= 6
+    && streakIntelligence.away.sample >= 6;
   const risk: 'Low' | 'Medium' = banker || (chosen.confidence >= 80 && chosen.contradiction <= 25) ? 'Low' : 'Medium';
   const selection = label(chosen.market, fixture);
-  const summary = `${selection} is preferred because team form, venue numbers and ${chosen.sample} similar historical odds profiles point in the same direction.`;
+  const confrontationText = streakIntelligence.strongestSignal?.label || 'team streak confrontation';
+  const summary = `${selection} won Zeus's market competition because ${chosen.sample} similar historical odds profiles, team statistics and the ${confrontationText.toLowerCase()} check point in the same direction.`;
 
   return {
     fixtureId: fixture.id,
@@ -951,6 +1043,104 @@ function analyzeProvisionalFixture(fixture: UpcomingFixture, allHistoricalMatche
   };
 }
 
-export function analyzeFixture(fixture: UpcomingFixture, allHistoricalMatches: NormalizedMatch[]): PredictionRecord | null {
-  return analyzeFullFixture(fixture, allHistoricalMatches) ?? analyzeProvisionalFixture(fixture, allHistoricalMatches);
+function buildRejectedBattle(
+  fixture: UpcomingFixture,
+  allHistoricalMatches: NormalizedMatch[],
+  intelligence: FixtureStreakIntelligence
+): RejectedBattle {
+  const prior = allHistoricalMatches.filter((match) => match.date < fixture.date);
+  const leagueHistory = prior.filter((match) => sameLeague(match.leagueName, fixture.leagueName)).length;
+  const homeHistory = countTeamHistory(prior, fixture.homeTeam);
+  const awayHistory = countTeamHistory(prior, fixture.awayTeam);
+  const visibleMarkets: MarketKey[] = [
+    'HOME_OVER_05', 'AWAY_OVER_05', 'OVER_15', 'UNDER_35',
+    'DOUBLE_CHANCE_1X', 'DOUBLE_CHANCE_X2', 'OVER_25', 'UNDER_25',
+    'HOME_OVER_15', 'AWAY_OVER_15', 'HOME_DNB', 'AWAY_DNB', 'HOME_WIN', 'AWAY_WIN'
+  ];
+  const available = visibleMarkets
+    .map((market) => ({ market, odd: marketOdd(fixture.odds, market) }))
+    .filter((item): item is { market: MarketKey; odd: number } => typeof item.odd === 'number')
+    .sort((a, b) => a.odd - b.odd);
+
+  const reasons: string[] = [];
+  let rejectionStage: RejectedBattle['rejectionStage'] = 'zeus-competition';
+  if (!fixture.odds.home || !fixture.odds.draw || !fixture.odds.away) {
+    rejectionStage = 'data';
+    reasons.push('The fixture does not have a complete Home/Draw/Away price set.');
+  }
+  if (leagueHistory < 120) {
+    rejectionStage = 'history';
+    reasons.push(`Only ${leagueHistory} local league matches are available; full Chronos requires at least 120.`);
+  }
+  if (homeHistory < 8 || awayHistory < 8) {
+    rejectionStage = 'history';
+    reasons.push(`Team history is too thin: ${fixture.homeTeam} ${homeHistory}, ${fixture.awayTeam} ${awayHistory}.`);
+  }
+  if (available.length && available.every((item) => item.odd < 1.19)) {
+    rejectionStage = 'low-odds-upgrade';
+    reasons.push('Every visible candidate was below 1.19 and no stronger related market qualified.');
+  }
+  if (intelligence.contradictionPenalty > 22 || intelligence.compatibility < 45) {
+    rejectionStage = 'leonidas';
+    reasons.push(`Leonidas found a strong streak conflict: compatibility ${Math.round(intelligence.compatibility)}%, penalty ${Math.round(intelligence.contradictionPenalty)}.`);
+  }
+  if (!reasons.length) reasons.push('Zeus compared the available markets, but none reached the required probability, value, sample and three-engine agreement together.');
+
+  return {
+    fixtureId: fixture.id,
+    engineVersion: ENGINE_VERSION,
+    runAt: new Date().toISOString(),
+    date: fixture.date,
+    kickoff: fixture.kickoff,
+    leagueCode: fixture.leagueCode,
+    leagueName: fixture.leagueName,
+    country: fixture.country,
+    homeTeam: fixture.homeTeam,
+    awayTeam: fixture.awayTeam,
+    rejectionStage,
+    topMarket: available[0] ? marketName(available[0].market) : null,
+    topOdds: available[0]?.odd ?? null,
+    reasons,
+    candidates: available.slice(0, 8).map((item) => ({
+      marketKey: item.market,
+      marketLabel: marketName(item.market),
+      odds: round(item.odd, 2),
+      reason: item.odd < 1.19 ? 'Below the 1.19 publication minimum unless a stronger upgrade passes.' : 'Visible market did not win the complete Zeus and Leonidas validation battle.'
+    })),
+    evidence: {
+      leagueHistory,
+      homeTeamHistory: homeHistory,
+      awayTeamHistory: awayHistory,
+      availableMarkets: available.length,
+      dataQuality: fixture.dataQuality ?? 60,
+      confrontationCompatibility: intelligence.compatibility,
+      contradictionPenalty: intelligence.contradictionPenalty,
+      strongestConfrontation: intelligence.strongestSignal?.label ?? null
+    }
+  };
+}
+
+export function analyzeFixtureBattle(
+  fixture: UpcomingFixture,
+  allHistoricalMatches: NormalizedMatch[],
+  externalStreakSnapshots: TeamStreakSnapshot[] = []
+): FixtureBattleResult {
+  const intelligence = buildFixtureStreakIntelligence(fixture, allHistoricalMatches, externalStreakSnapshots);
+  const prediction = analyzeFullFixture(fixture, allHistoricalMatches, intelligence) ?? analyzeProvisionalFixture(fixture, allHistoricalMatches);
+  const snapshots = [intelligence.home, intelligence.away, intelligence.homeOverall, intelligence.awayOverall];
+  const confrontation = toConfrontationRecord(fixture, ENGINE_VERSION, intelligence);
+  return {
+    prediction,
+    rejection: prediction ? null : buildRejectedBattle(fixture, allHistoricalMatches, intelligence),
+    snapshots,
+    confrontation
+  };
+}
+
+export function analyzeFixture(
+  fixture: UpcomingFixture,
+  allHistoricalMatches: NormalizedMatch[],
+  externalStreakSnapshots: TeamStreakSnapshot[] = []
+): PredictionRecord | null {
+  return analyzeFixtureBattle(fixture, allHistoricalMatches, externalStreakSnapshots).prediction;
 }

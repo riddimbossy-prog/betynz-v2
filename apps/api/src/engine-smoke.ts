@@ -5,7 +5,7 @@ import type { UpcomingFixture } from './forecast-types.js';
 import type { NormalizedMatch } from './types.js';
 
 const fixture: UpcomingFixture = {
-  id: 'smoke-liverpool-arsenal',
+  id: 'smoke-man-united-forest',
   providerFixtureId: 999999,
   leagueId: 39,
   leagueCode: '39',
@@ -15,25 +15,25 @@ const fixture: UpcomingFixture = {
   kickoff: '2026-07-24T18:00:00Z',
   date: '2026-07-24',
   status: 'NS',
-  homeTeam: 'Liverpool',
-  awayTeam: 'Arsenal',
+  homeTeam: 'Man United',
+  awayTeam: "Nott'm Forest",
+  dataQuality: 90,
   odds: {
-    home: 2.15, draw: 3.6, away: 3.2,
+    home: 1.55, draw: 4.1, away: 5.8,
     over15: 1.2, under15: 4.1,
-    over25: 1.73, under25: 2.08,
-    over35: 2.7, under35: 1.45,
-    homeOver05: 1.2, homeUnder05: 3.8,
-    homeOver15: 1.9, homeUnder15: 1.8,
-    awayOver05: 1.28, awayUnder05: 3.2,
-    awayOver15: 2.2, awayUnder15: 1.6,
-    dc1x: 1.35, dcx2: 1.65,
-    homeDnb: 1.58, awayDnb: 2.25
-  }
-};
+    over25: 1.7, under25: 2.1,
+    over35: 2.65, under35: 1.45,
+    homeOver05: 1.16, homeUnder05: 4.4,
+    homeOver15: 1.65, homeUnder15: 2.1,
+    awayOver05: 1.55, awayUnder05: 2.25,
+    awayOver15: 3.5, awayUnder15: 1.25,
+    dc1x: 1.12, dcx2: 2.25,
+    homeDnb: 1.22, awayDnb: 4.1
+  }};
 
 const prediction = analyzeFixture(fixture, demoMatches as NormalizedMatch[]);
 if (!prediction) throw new Error('Expected the smoke-test fixture to produce a qualified prediction.');
 assert(prediction.odds >= 1.19, 'Published odds must never be below 1.19.');
-assert(prediction.engines.filter((engine) => engine.pass).length >= 3, 'At least three engines must approve the selection.');
+assert.equal(prediction.engines.filter((engine) => engine.pass).length, 4, 'Chronos, Athena, Zeus and Leonidas must all approve the smoke selection.');
 assert(prediction.explanation.length >= 3, 'Simple-English statistical reasons are required.');
 console.log(JSON.stringify({ ok: true, selection: prediction.selection, odds: prediction.odds, confidence: prediction.confidence }, null, 2));

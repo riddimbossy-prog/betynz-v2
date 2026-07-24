@@ -422,3 +422,126 @@ main { width: min(1380px, calc(100% - 38px)); margin: 0 auto; }
   .radar-topline { align-items: center; }
   .radar-fixture-line { min-height: auto; }
 }
+
+/* Zeus Streak Intelligence 2.7 auto-pick battle board */
+.zeus-auto-section {
+  position: relative;
+  border-top: 1px solid rgba(255,148,64,.18);
+}
+.zeus-auto-section::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 230px;
+  pointer-events: none;
+  background: radial-gradient(circle at 18% 0, rgba(255,148,64,.09), transparent 48%);
+}
+.zeus-auto-list {
+  position: relative;
+  display: grid;
+  gap: 10px;
+}
+.zeus-auto-card {
+  min-width: 0;
+  padding: 16px 18px;
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) minmax(190px, auto) auto;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(20,24,33,.98), rgba(12,15,21,.98));
+  box-shadow: 0 13px 34px rgba(0,0,0,.13);
+}
+.zeus-auto-card:hover {
+  border-color: rgba(255,148,64,.28);
+  transform: translateY(-1px);
+  transition: .18s ease;
+}
+.zeus-auto-rank {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  color: #17100a;
+  border-radius: 13px;
+  background: linear-gradient(145deg, var(--orange-2), var(--orange));
+  font-size: 19px;
+  font-weight: 950;
+}
+.zeus-auto-copy,
+.zeus-auto-pick { min-width: 0; }
+.zeus-auto-copy small,
+.zeus-auto-pick small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .45px;
+}
+.zeus-auto-pick strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--orange-2);
+  font-size: 16px;
+}
+.zeus-auto-card .why-button {
+  min-width: 112px;
+  justify-content: center;
+}
+
+@media (max-width: 900px) {
+  .zeus-auto-card {
+    grid-template-columns: 46px minmax(0, 1fr) auto;
+  }
+  .zeus-auto-pick {
+    grid-column: 2 / -1;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 680px) {
+  .zeus-auto-card {
+    padding: 14px;
+    grid-template-columns: 42px minmax(0, 1fr);
+    gap: 12px;
+  }
+  .zeus-auto-rank {
+    width: 40px;
+    height: 40px;
+    border-radius: 11px;
+    font-size: 16px;
+  }
+  .zeus-auto-pick,
+  .zeus-auto-card .why-button {
+    grid-column: 1 / -1;
+  }
+  .zeus-auto-card .why-button { width: 100%; }
+}
+.zeus-auto-copy h3 {
+  margin: 5px 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 17px;
+}
+.zeus-auto-copy h3 span { color: var(--muted); font-weight: 500; }
+.zeus-auto-copy p {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+}
+.zeus-auto-pick b {
+  display: inline-block;
+  margin-top: 5px;
+  color: #fff;
+  font-size: 18px;
+}
+@media (max-width: 680px) {
+  .zeus-auto-copy h3,
+  .zeus-auto-copy p { white-space: normal; }
+}

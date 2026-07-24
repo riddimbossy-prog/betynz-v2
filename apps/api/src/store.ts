@@ -1,11 +1,15 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import demoMatches from '../data/demo-matches.json' with { type: 'json' };
 import type { NormalizedMatch } from './types.js';
-import type { PredictionRecord, UpcomingFixture } from './forecast-types.js';
+import type { PredictionRecord, RejectedBattle, UpcomingFixture } from './forecast-types.js';
+import type { ConfrontationRecord, TeamStreakSnapshot } from './streak-intelligence.js';
+import { teamKey } from './identity.js';
 
 const url = process.env.SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase: SupabaseClient | null = url && key ? createClient(url, key, { auth: { persistSession: false } }) : null;
+const demoRejectedBattles: RejectedBattle[] = [];
+const demoStreakSnapshots: TeamStreakSnapshot[] = [];
 
 export function sourceName() {
   return supabase ? 'supabase' as const : 'demo' as const;
@@ -205,6 +209,263 @@ export async function updatePredictionSettlement(fixtureId: string, status: 'won
     .update({ settled_status: status, settled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('fixture_id', fixtureId);
   if (error) throw error;
+}
+
+
+
+function mergeStreakSnapshots(existing: TeamStreakSnapshot, incoming: TeamStreakSnapshot): TeamStreakSnapshot {
+  const incomingHasStreaks = Object.values(incoming.streaks).some((value) => Number(value) > 0);
+  const incomingHasHtFt = incoming.htft.sample > 0 || Object.keys(incoming.htft.combinations ?? {}).length > 0;
+  return {
+    ...existing,
+    ...incoming,
+    providerUrl: incoming.providerUrl || existing.providerUrl,
+    sample: Math.max(existing.sample, incoming.sample),
+    streaks: incomingHasStreaks ? incoming.streaks : existing.streaks,
+    adjusted: incomingHasStreaks ? incoming.adjusted : existing.adjusted,
+    htft: incomingHasHtFt ? incoming.htft : existing.htft
+  };
+}
+
+function streakSnapshotKey(snapshot: TeamStreakSnapshot) {
+  return `${snapshot.snapshotDate}|${snapshot.leagueCode}|${snapshot.season}|${teamKey(snapshot.team)}|${snapshot.scope}|${snapshot.source}`;
+}
+
+export async function upsertStreakSnapshots(snapshots: TeamStreakSnapshot[]) {
+  const unique = new Map<string, TeamStreakSnapshot>();
+  for (const snapshot of snapshots) {
+    const key = streakSnapshotKey(snapshot);
+    const current = unique.get(key);
+    unique.set(key, current ? mergeStreakSnapshots(current, snapshot) : snapshot);
+  }
+  let values = [...unique.values()];
+  if (!supabase) {
+    for (const snapshot of values) {
+      const index = demoStreakSnapshots.findIndex((item) => streakSnapshotKey(item) === streakSnapshotKey(snapshot));
+      if (index >= 0) demoStreakSnapshots[index] = mergeStreakSnapshots(demoStreakSnapshots[index], snapshot);
+      else demoStreakSnapshots.push(snapshot);
+    }
+    return values.length;
+  }
+
+  // A league can expose streaks and HT/FT on separate tabs. Merge with the
+  // previously saved row so one page cannot erase intelligence from another.
+  const merged = new Map<string, TeamStreakSnapshot>();
+  const groups = new Map<string, TeamStreakSnapshot[]>();
+  for (const snapshot of values) {
+    const key = `${snapshot.snapshotDate}|${snapshot.leagueCode}|${snapshot.season}|${snapshot.source}`;
+    const group = groups.get(key) ?? [];
+    group.push(snapshot);
+    groups.set(key, group);
+  }
+  for (const group of groups.values()) {
+    const example = group[0];
+    const { data, error } = await supabase
+      .from('streak_snapshots')
+      .select('*')
+      .eq('snapshot_date', example.snapshotDate)
+      .eq('league_code', example.leagueCode)
+      .eq('season', example.season)
+      .eq('source', example.source);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      const snapshot = dbToStreakSnapshot(row);
+      merged.set(streakSnapshotKey(snapshot), snapshot);
+    }
+    for (const snapshot of group) {
+      const key = streakSnapshotKey(snapshot);
+      const current = merged.get(key);
+      merged.set(key, current ? mergeStreakSnapshots(current, snapshot) : snapshot);
+    }
+  }
+  values = [...merged.values()];
+
+  const rows = values.map((snapshot) => ({
+    snapshot_date: snapshot.snapshotDate,
+    source: snapshot.source,
+    provider_url: snapshot.providerUrl ?? null,
+    league_code: snapshot.leagueCode,
+    league_name: snapshot.leagueName,
+    country: snapshot.country,
+    season: snapshot.season,
+    team: snapshot.team,
+    team_key: teamKey(snapshot.team),
+    scope: snapshot.scope,
+    matches_sample: snapshot.sample,
+    streaks: snapshot.streaks,
+    opponent_adjusted: snapshot.adjusted,
+    htft: snapshot.htft,
+    updated_at: new Date().toISOString()
+  }));
+  for (let i = 0; i < rows.length; i += 250) {
+    const { error } = await supabase.from('streak_snapshots').upsert(rows.slice(i, i + 250), {
+      onConflict: 'snapshot_date,league_code,season,team_key,scope,source'
+    });
+    if (error) throw error;
+  }
+  return rows.length;
+}
+
+
+export async function listStreakSnapshots(from: string, to: string): Promise<TeamStreakSnapshot[]> {
+  if (!supabase) {
+    return demoStreakSnapshots
+      .filter((snapshot) => snapshot.snapshotDate >= from && snapshot.snapshotDate <= to)
+      .sort((a, b) => b.snapshotDate.localeCompare(a.snapshotDate));
+  }
+  const rows: any[] = [];
+  const pageSize = 1000;
+  for (let offset = 0; offset < 10000; offset += pageSize) {
+    const { data, error } = await supabase
+      .from('streak_snapshots')
+      .select('*')
+      .gte('snapshot_date', from)
+      .lte('snapshot_date', to)
+      .order('snapshot_date', { ascending: false })
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    rows.push(...(data ?? []));
+    if (!data || data.length < pageSize) break;
+  }
+  return rows.map(dbToStreakSnapshot);
+}
+
+export async function upsertConfrontationRecords(records: ConfrontationRecord[]) {
+  if (!records.length) return 0;
+  if (!supabase) return records.length;
+  const rows = records.map((record) => ({
+    fixture_id: record.fixtureId,
+    engine_version: record.engineVersion,
+    generated_at: record.generatedAt,
+    match_date: record.matchDate,
+    league_code: record.leagueCode,
+    league_name: record.leagueName,
+    country: record.country,
+    home_team: record.homeTeam,
+    away_team: record.awayTeam,
+    strongest_signal: record.strongestSignal,
+    score: record.score,
+    compatible: record.compatible,
+    signals: record.signals,
+    home_snapshot: record.homeSnapshot,
+    away_snapshot: record.awaySnapshot,
+    updated_at: new Date().toISOString()
+  }));
+  for (let i = 0; i < rows.length; i += 250) {
+    const { error } = await supabase.from('confrontation_records').upsert(rows.slice(i, i + 250), {
+      onConflict: 'fixture_id,engine_version'
+    });
+    if (error) throw error;
+  }
+  return rows.length;
+}
+
+export async function replaceRejectedBattles(from: string, to: string, engineVersion: string, records: RejectedBattle[]) {
+  if (!supabase) {
+    for (let i = demoRejectedBattles.length - 1; i >= 0; i -= 1) {
+      const row = demoRejectedBattles[i];
+      if (row.engineVersion === engineVersion && row.date >= from && row.date <= to) demoRejectedBattles.splice(i, 1);
+    }
+    demoRejectedBattles.push(...records);
+    return records.length;
+  }
+  const { error: deleteError } = await supabase
+    .from('rejected_battles')
+    .delete()
+    .eq('engine_version', engineVersion)
+    .gte('match_date', from)
+    .lte('match_date', to);
+  if (deleteError) throw deleteError;
+  const rows = records.map((record) => ({
+    fixture_id: record.fixtureId,
+    engine_version: record.engineVersion,
+    run_at: record.runAt,
+    match_date: record.date,
+    kickoff: record.kickoff,
+    league_code: record.leagueCode,
+    league_name: record.leagueName,
+    country: record.country,
+    home_team: record.homeTeam,
+    away_team: record.awayTeam,
+    rejection_stage: record.rejectionStage,
+    top_market: record.topMarket,
+    top_odds: record.topOdds,
+    reasons: record.reasons,
+    candidates: record.candidates,
+    evidence: record.evidence
+  }));
+  for (let i = 0; i < rows.length; i += 250) {
+    const { error } = await supabase.from('rejected_battles').upsert(rows.slice(i, i + 250), {
+      onConflict: 'fixture_id,engine_version'
+    });
+    if (error) throw error;
+  }
+  return rows.length;
+}
+
+export async function listRejectedBattles(from: string, to: string, limit = 500, engineVersion?: string): Promise<RejectedBattle[]> {
+  if (!supabase) {
+    return demoRejectedBattles
+      .filter((row) => row.date >= from && row.date <= to && (!engineVersion || row.engineVersion === engineVersion))
+      .sort((a, b) => b.runAt.localeCompare(a.runAt))
+      .slice(0, limit);
+  }
+  let query = supabase
+    .from('rejected_battles')
+    .select('*')
+    .gte('match_date', from)
+    .lte('match_date', to)
+    .order('run_at', { ascending: false })
+    .limit(limit);
+  if (engineVersion) query = query.eq('engine_version', engineVersion);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []).map((row: any) => ({
+    fixtureId: row.fixture_id,
+    engineVersion: row.engine_version,
+    runAt: row.run_at,
+    date: row.match_date,
+    kickoff: row.kickoff,
+    leagueCode: row.league_code,
+    leagueName: row.league_name,
+    country: row.country ?? '',
+    homeTeam: row.home_team,
+    awayTeam: row.away_team,
+    rejectionStage: row.rejection_stage,
+    topMarket: row.top_market ?? null,
+    topOdds: row.top_odds == null ? null : Number(row.top_odds),
+    reasons: Array.isArray(row.reasons) ? row.reasons : [],
+    candidates: Array.isArray(row.candidates) ? row.candidates : [],
+    evidence: row.evidence ?? {}
+  }));
+}
+
+
+function dbToStreakSnapshot(row: any): TeamStreakSnapshot {
+  return {
+    snapshotDate: row.snapshot_date,
+    source: row.source === 'betexplorer' ? 'betexplorer' : 'computed-history',
+    providerUrl: row.provider_url ?? undefined,
+    leagueCode: row.league_code,
+    leagueName: row.league_name,
+    country: row.country ?? '',
+    season: row.season,
+    team: row.team,
+    scope: row.scope,
+    sample: Number(row.matches_sample ?? 0),
+    streaks: row.streaks ?? {},
+    adjusted: row.opponent_adjusted ?? { ...(row.streaks ?? {}), opponentStrength: 1.25 },
+    htft: row.htft ?? {
+      sample: 0,
+      firstHalfLeadRate: 0,
+      firstHalfDrawRate: 0,
+      firstHalfTrailRate: 0,
+      leadToWinRate: 0,
+      drawToWinRate: 0,
+      trailToAvoidLossRate: 0,
+      combinations: {}
+    }
+  };
 }
 
 function dbToApi(row: any): NormalizedMatch {

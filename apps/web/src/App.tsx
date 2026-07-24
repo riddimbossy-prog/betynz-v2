@@ -31,9 +31,10 @@ const emptyPredictions: PredictionDashboard = {
   source: 'offline',
   generatedAt: new Date().toISOString(),
   window: { from: '', to: '', days: [] },
-  metrics: { fixtures: 0, picks: 0, fullPicks: 0, provisionalPicks: 0, bankers: 0, leagues: 0, pickLeagues: 0, lowOddsUpgrades: 0, pricedFixtures: 0 },
+  metrics: { fixtures: 0, picks: 0, fullPicks: 0, provisionalPicks: 0, bankers: 0, leagues: 0, pickLeagues: 0, lowOddsUpgrades: 0, pricedFixtures: 0, zeusAutoPicks: 0 },
   bankers: [],
   predictions: [],
+  zeusAutoPicks: [],
   radarFixtures: []
 };
 
@@ -71,7 +72,7 @@ function evidenceValue(prediction: Prediction, key: string, fallback = '—') {
 }
 
 function engineName(key: string) {
-  const map: Record<string, string> = { chronos: 'Historical odds', athena: 'Team stats', zeus: 'Market edge', leonidas: 'Strict filter' };
+  const map: Record<string, string> = { chronos: 'Historical odds comparison', athena: 'Stats + HT/FT validation', zeus: 'One-tip market battle', leonidas: 'Rejection gate' };
   return map[key] || key;
 }
 
@@ -164,6 +165,27 @@ function RadarCard({ fixture, prediction }: { fixture: UpcomingFixture; predicti
   );
 }
 
+
+function ZeusAutoCard({ prediction, rank, onExplain }: { prediction: Prediction; rank: number; onExplain: () => void }) {
+  const signal = String(prediction.evidence.confrontationSignal ?? 'Statistical agreement');
+  return (
+    <article className="zeus-auto-card">
+      <span className="zeus-auto-rank">#{rank}</span>
+      <div className="zeus-auto-copy">
+        <small>{prediction.country ? `${prediction.country} · ` : ''}{prediction.leagueName} · {timeLabel(prediction.kickoff)}</small>
+        <h3>{prediction.homeTeam} <span>vs</span> {prediction.awayTeam}</h3>
+        <p>{signal}</p>
+      </div>
+      <div className="zeus-auto-pick">
+        <small>Zeus chose</small>
+        <strong>{prediction.selection}</strong>
+        <b>{prediction.odds.toFixed(2)}</b>
+      </div>
+      <button className="why-button" onClick={onExplain} aria-label={`Why ${prediction.selection}`}><Info size={16} />Why?</button>
+    </article>
+  );
+}
+
 export default function App() {
   const [data, setData] = useState<PredictionDashboard>(emptyPredictions);
   const [history, setHistory] = useState<HistoricalDashboard>(emptyHistory);
@@ -213,6 +235,7 @@ export default function App() {
   const fullPredictions = useMemo(() => datePredictions.filter((prediction) => prediction.tier === 'full'), [datePredictions]);
   const provisionalPredictions = useMemo(() => datePredictions.filter((prediction) => prediction.tier === 'provisional'), [datePredictions]);
   const bankers = useMemo(() => fullPredictions.filter((prediction) => prediction.banker).slice(0, 3), [fullPredictions]);
+  const zeusAutoPicks = useMemo(() => (data.zeusAutoPicks ?? data.predictions).filter((prediction) => prediction.date === selectedDate).slice(0, 12), [data.zeusAutoPicks, data.predictions, selectedDate]);
   const regular = useMemo(() => fullPredictions.filter((prediction) => !prediction.banker), [fullPredictions]);
   const predictionByFixture = useMemo(() => new Map(data.predictions.map((prediction) => [prediction.fixtureId, prediction])), [data.predictions]);
   const radarFixtures = useMemo(() => {
@@ -250,7 +273,7 @@ export default function App() {
         </a>
         <label className="search-box">
           <Search size={18} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search teams, leagues or picks" />
+          <input value={query} onChange={(event: { target: { value: string } }) => setQuery(event.target.value)} placeholder="Search teams, leagues or picks" />
         </label>
         <div className="header-actions">
           <div className="last-updated"><Clock3 size={14} /><span>Updated</span><strong>{updatedLabel(data.generatedAt)}</strong></div>
@@ -263,26 +286,26 @@ export default function App() {
       <main id="top">
         <section className="hero">
           <div className="hero-copy">
-            <span className="eyebrow"><Sparkles size={14} /> CHRONOS FUSION 2.6</span>
-            <h1>Six days.<br /><span>More leagues. Clearer intelligence.</span></h1>
-            <p>Betynz now scans a much wider BetExplorer league catalogue. Every priced fixture appears in Match Radar, while only statistically qualified selections enter the prediction and Banker boards.</p>
+            <span className="eyebrow"><Sparkles size={14} /> ZEUS AUTO PICKS 2.7</span>
+            <h1>One battle. One tip.<br /><span>Streaks, HT/FT and odds in agreement.</span></h1>
+            <p>Zeus now makes every available market compete for one final selection. Chronos checks old odds, Athena validates team and HT/FT statistics, and Leonidas rejects contradictions before anything is published.</p>
             <div className="hero-actions">
               <a className="primary-button" href="#bankers"><Star size={18} />See Today’s Bankers</a>
               <a className="secondary-button" href="#board"><BarChart3 size={18} />Open Full Board</a>
             </div>
             <div className="trust-row">
               <span><ShieldCheck size={15} /> No forced picks</span>
-              <span><TrendingUp size={15} /> Odds below 1.19 are upgraded</span>
+              <span><TrendingUp size={15} /> Sub-1.19 picks need a strict upgrade</span>
               <span><History size={15} /> {history.metrics.matches.toLocaleString()} settled matches</span>
             </div>
           </div>
           <div className="hero-panel">
-            <div className="hero-orbit"><span>CHRONOS</span><strong>{data.metrics.picks}</strong><small>qualified picks over six days</small></div>
+            <div className="hero-orbit"><span>ZEUS</span><strong>{data.metrics.picks}</strong><small>Zeus one-tip selections over six days</small></div>
             <div className="hero-metric-grid">
               <span><small>Bankers</small><strong>{data.metrics.bankers}</strong></span>
               <span><small>Priced fixtures</small><strong>{data.metrics.pricedFixtures}</strong></span>
               <span><small>Leagues</small><strong>{data.metrics.leagues}</strong></span>
-              <span><small>Provisional</small><strong>{data.metrics.provisionalPicks}</strong></span>
+              <span><small>Streak-tested</small><strong>{data.metrics.zeusAutoPicks}</strong></span>
             </div>
           </div>
         </section>
@@ -305,8 +328,24 @@ export default function App() {
         <section className="metrics-row">
           <article><span><Target /></span><div><small>{selectedLabel.short} qualified picks</small><strong>{datePredictions.length}</strong></div></article>
           <article><span><Trophy /></span><div><small>{selectedLabel.short} bankers</small><strong>{bankers.length}</strong></div></article>
-          <article><span><BrainCircuit /></span><div><small>Engine version</small><strong>2.6</strong></div></article>
+          <article><span><BrainCircuit /></span><div><small>Engine version</small><strong>2.7</strong></div></article>
           <article><span><Activity /></span><div><small>{selectedLabel.short} fixtures on radar</small><strong>{radarFixtures.length}</strong></div></article>
+        </section>
+
+        <section className="content-section zeus-auto-section" id="zeus-auto">
+          <div className="section-heading">
+            <div><span className="eyebrow"><Zap size={14} /> ZEUS AUTO PICKS</span><h2>One final tip per qualified match</h2><p>Wins, draws, losses, no-win, no-draw, unbeaten, O/U 2.5 and HT/FT splits all enter the market competition.</p></div>
+            <span className="board-count">{zeusAutoPicks.length} auto picks</span>
+          </div>
+          {zeusAutoPicks.length === 0 ? (
+            <div className="empty-panel compact"><ShieldCheck /><div><h3>No Zeus pick survived for this day</h3><p>The engine did not force a tip after the streak and Leonidas checks.</p></div></div>
+          ) : (
+            <div className="zeus-auto-list">
+              {zeusAutoPicks.map((prediction, index) => (
+                <ZeusAutoCard key={prediction.fixtureId} prediction={prediction} rank={index + 1} onExplain={() => setSelectedPrediction(prediction)} />
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="content-section banker-section" id="bankers">
@@ -340,10 +379,10 @@ export default function App() {
             <span className="status-pill">4 / 4 online</span>
           </div>
           <div className="engine-grid">
-            <article><span>◴</span><div><h3>Chronos</h3><p>Finds similar old matches and odds patterns.</p></div></article>
-            <article><span>Α</span><div><h3>Athena</h3><p>Checks form, scoring, defence and venue records.</p></div></article>
-            <article><span>ϟ</span><div><h3>Zeus</h3><p>Checks market price, strength gap and value.</p></div></article>
-            <article><span>Λ</span><div><h3>Leonidas</h3><p>Rejects contradictions and weak samples.</p></div></article>
+            <article><span>◴</span><div><h3>Chronos</h3><p>Compares the fixture with the closest historical 1X2 and goal-odds profiles.</p></div></article>
+            <article><span>Α</span><div><h3>Athena</h3><p>Validates form, venue splits, O/U 2.5 streaks and HT/FT overall, home and away records.</p></div></article>
+            <article><span>ϟ</span><div><h3>Zeus</h3><p>Makes every eligible market compete and publishes only the highest battle score.</p></div></article>
+            <article><span>Λ</span><div><h3>Leonidas</h3><p>Rejects conflicting streaks, thin samples, weak value and failed 1.19 upgrades.</p></div></article>
           </div>
         </section>
 
@@ -429,6 +468,7 @@ export default function App() {
         <button className="drawer-close" onClick={() => setMenuOpen(false)}><X /></button>
         <span className="eyebrow">BETYNZ NAVIGATION</span>
         <a href="#top" onClick={() => setMenuOpen(false)}>Overview</a>
+        <a href="#zeus-auto" onClick={() => setMenuOpen(false)}>Zeus Auto Picks</a>
         <a href="#bankers" onClick={() => setMenuOpen(false)}>Bankers</a>
         <a href="#board" onClick={() => setMenuOpen(false)}>Full board</a>
         <a href="#provisional" onClick={() => setMenuOpen(false)}>Provisional picks</a>
@@ -461,6 +501,14 @@ export default function App() {
               <span><small>Home team history</small><strong>{evidenceValue(selectedPrediction, 'homeTeamHistory', evidenceValue(selectedPrediction, 'homePosition'))}</strong></span>
               <span><small>Away team history</small><strong>{evidenceValue(selectedPrediction, 'awayTeamHistory', evidenceValue(selectedPrediction, 'awayPosition'))}</strong></span>
               <span><small>Qualification</small><strong>{selectedPrediction.tier === 'full' ? 'Full' : 'Provisional'}</strong></span>
+              <span><small>Confrontation</small><strong>{evidenceValue(selectedPrediction, 'confrontationSignal')}</strong></span>
+              <span><small>Streak compatibility</small><strong>{evidenceValue(selectedPrediction, 'confrontationCompatibility')}%</strong></span>
+              <span><small>Home unbeaten / no-win</small><strong>{evidenceValue(selectedPrediction, 'homeUnbeatenStreak')} / {evidenceValue(selectedPrediction, 'homeNoWinStreak')}</strong></span>
+              <span><small>Away unbeaten / no-win</small><strong>{evidenceValue(selectedPrediction, 'awayUnbeatenStreak')} / {evidenceValue(selectedPrediction, 'awayNoWinStreak')}</strong></span>
+              <span><small>Home O2.5 / U2.5</small><strong>{evidenceValue(selectedPrediction, 'homeOver25Streak')} / {evidenceValue(selectedPrediction, 'homeUnder25Streak')}</strong></span>
+              <span><small>Away O2.5 / U2.5</small><strong>{evidenceValue(selectedPrediction, 'awayOver25Streak')} / {evidenceValue(selectedPrediction, 'awayUnder25Streak')}</strong></span>
+              <span><small>Home HT lead → win</small><strong>{evidenceValue(selectedPrediction, 'homeLeadToWinRate')}%</strong></span>
+              <span><small>Away HT lead → win</small><strong>{evidenceValue(selectedPrediction, 'awayLeadToWinRate')}%</strong></span>
             </div>
             <h3>Engine checks</h3>
             <div className="engine-detail-list">
@@ -479,7 +527,7 @@ export default function App() {
 
       <nav className="mobile-nav">
         <a href="#top"><Activity /><span>Home</span></a>
-        <a href="#bankers"><Star /><span>Bankers</span></a>
+        <a href="#zeus-auto"><Zap /><span>Auto Picks</span></a>
         <a href="#radar"><Activity /><span>Radar</span></a>
         <button onClick={() => setMenuOpen(true)}><Menu /><span>Menu</span></button>
       </nav>

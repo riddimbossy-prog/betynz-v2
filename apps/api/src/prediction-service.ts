@@ -1,12 +1,16 @@
 import { fetchMultiLeagueUpcomingFixtures } from './fixture-provider.js';
-import { analyzeFixture, ENGINE_VERSION } from './engine.js';
+import { analyzeFixtureBattle, ENGINE_VERSION } from './engine.js';
 import {
   allMatches,
   clearPredictionsForWindow,
   listPredictions,
+  listStreakSnapshots,
   listUpcomingFixtures,
   sourceName,
+  upsertConfrontationRecords,
   upsertPredictions,
+  upsertStreakSnapshots,
+  replaceRejectedBattles,
   upsertUpcomingFixtures
 } from './store.js';
 import type { PredictionDashboard } from './forecast-types.js';
@@ -34,17 +38,26 @@ export async function rebuildPredictions(from?: string, to?: string) {
   const defaults = predictionWindow();
   const start = from || defaults.from;
   const end = to || defaults.to;
-  const [fixtures, historicalMatches] = await Promise.all([
+  const snapshotFrom = addDays(start, -7);
+  const [fixtures, historicalMatches, externalStreakSnapshots] = await Promise.all([
     listUpcomingFixtures(start, end),
-    allMatches()
+    allMatches(),
+    listStreakSnapshots(snapshotFrom, end)
   ]);
 
-  const predictions = fixtures
-    .map((fixture) => analyzeFixture(fixture, historicalMatches))
-    .filter((prediction) => prediction !== null);
+  const battles = fixtures.map((fixture) => analyzeFixtureBattle(fixture, historicalMatches, externalStreakSnapshots));
+  const predictions = battles.flatMap((battle) => battle.prediction ? [battle.prediction] : []);
+  const rejections = battles.flatMap((battle) => battle.rejection ? [battle.rejection] : []);
+  const snapshots = battles.flatMap((battle) => battle.snapshots);
+  const confrontations = battles.flatMap((battle) => battle.confrontation ? [battle.confrontation] : []);
 
   await clearPredictionsForWindow(start, end, ENGINE_VERSION);
-  await upsertPredictions(predictions);
+  await Promise.all([
+    upsertPredictions(predictions),
+    replaceRejectedBattles(start, end, ENGINE_VERSION, rejections),
+    upsertStreakSnapshots(snapshots),
+    upsertConfrontationRecords(confrontations)
+  ]);
 
   return {
     window: { from: start, to: end },
@@ -55,7 +68,11 @@ export async function rebuildPredictions(from?: string, to?: string) {
     fullPicks: predictions.filter((prediction) => prediction.tier === 'full').length,
     provisionalPicks: predictions.filter((prediction) => prediction.tier === 'provisional').length,
     bankers: predictions.filter((prediction) => prediction.banker).length,
-    lowOddsUpgrades: predictions.filter((prediction) => prediction.upgraded).length
+    lowOddsUpgrades: predictions.filter((prediction) => prediction.upgraded).length,
+    rejectedBattles: rejections.length,
+    streakSnapshots: snapshots.length,
+    confrontationRecords: confrontations.length,
+    externalStreakSnapshots: externalStreakSnapshots.length
   };
 }
 
@@ -90,6 +107,9 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
   const bankers = [...sorted]
     .filter((prediction) => prediction.banker && prediction.tier === 'full')
     .sort((a, b) => b.confidence - a.confidence || b.edge - a.edge);
+  const zeusAutoPicks = [...sorted]
+    .filter((prediction) => prediction.tier === 'full')
+    .sort((a, b) => b.confidence + b.edge * 0.6 - (a.confidence + a.edge * 0.6) || a.kickoff.localeCompare(b.kickoff));
   return {
     source: sourceName(),
     generatedAt: new Date().toISOString(),
@@ -103,10 +123,12 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
       leagues: new Set(fixtures.map((fixture) => `${fixture.country}|${fixture.leagueName}`)).size,
       pickLeagues: new Set(sorted.map((prediction) => `${prediction.country}|${prediction.leagueName}`)).size,
       lowOddsUpgrades: sorted.filter((prediction) => prediction.upgraded).length,
-      pricedFixtures: radarFixtures.length
+      pricedFixtures: radarFixtures.length,
+      zeusAutoPicks: zeusAutoPicks.length
     },
     bankers,
     predictions: sorted,
+    zeusAutoPicks,
     radarFixtures
   };
 }

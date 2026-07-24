@@ -1,24 +1,25 @@
-# Betynz Chronos Fusion v2.6
+# Betynz Zeus Streak Intelligence v2.7
 
-Betynz prediction platform for **today plus the next five days**, using BetExplorer browser-rendered fixtures and visible 1X2 prices.
+Betynz prediction platform for **today plus the next five days**, combining browser-rendered BetExplorer fixtures and visible odds with historical results, team streaks, HT/FT patterns and strict one-tip validation.
 
-## What v2.6 adds
+## What v2.7 adds
 
-- Wider BetExplorer catalogue discovery from all league links on the football page
-- Up to 120 league pages per production sync, with a 60-page minimum scan
-- Slow requests, jitter and stop-on-block safeguards
-- Match Radar showing every fixture with complete Home/Draw/Away odds
-- Date tabs showing both fixture and prediction counts
-- Country and league names carried into every fixture
-- **Full Chronos** selections when local league, team, venue and historical odds data are ready
-- **Provisional global-odds** selections when local history is limited
-- Provisional selections are clearly marked, medium risk and can never be Bankers
-- Banker section remains restricted to fully qualified 4/4-engine selections
-- One best market per fixture
-- Low-odds rule: prices below 1.19 require a validated stronger market; otherwise the match is rejected
-- Simple-English explanation for every published pick
-- Fixture-league counts are based on imported fixtures, not only qualified picks
-- Predictions are rebuilt once after the complete browser crawl, avoiding stale or duplicated engine runs
+- BetExplorer streak and HT/FT page discovery in the browser collector
+- Wins, draws, losses, no-win, no-draw and unbeaten streak snapshots
+- Over/Under 2.5 streak analysis for home, away and overall form
+- HT/FT overall, home and away profiles
+- Opponent-adjusted streak strength using the historical PPG of recent opponents
+- Team-v-team confrontation signals such as unbeaten vs no-win and wins vs losses
+- **Zeus market competition**: all available markets compete and only one tip can win per fixture
+- **Chronos** historical-odds neighbourhood comparison
+- **Athena** statistical, streak and HT/FT validation
+- **Leonidas** contradiction and rejection gate
+- A responsive **Zeus Auto Picks** page section
+- Simple-English explanations with confrontation, streak and HT/FT evidence
+- Private admin rejected-battles audit endpoint
+- Supabase tables for streak snapshots, confrontation records and rejected battles
+- Bankers restricted to fully validated, four-engine selections
+- Existing 1.19 minimum and strict market-upgrade rule retained
 
 ## Main endpoints
 
@@ -26,9 +27,15 @@ Betynz prediction platform for **today plus the next five days**, using BetExplo
 - `GET /api/v1/upcoming-fixtures`
 - `GET /api/v1/predictions`
 - `GET /api/v1/bankers?date=YYYY-MM-DD`
+- `GET /api/v1/admin/rejected-battles` — requires `x-admin-token`
 - `POST /api/v1/admin/parse-betexplorer-html`
 - `POST /api/v1/admin/ingest-betexplorer-html`
+- `POST /api/v1/admin/parse-betexplorer-streak-html`
+- `POST /api/v1/admin/ingest-betexplorer-streak-html`
 - `POST /api/v1/admin/rebuild-predictions`
-- `POST /api/v1/admin/sync-upcoming`
 
-Existing v2.5 installations need no new migration. Follow `docs/UPGRADE_TO_V2_6.md`.
+## Upgrade
+
+Run `supabase/migrations/005_zeus_streak_intelligence.sql`, deploy the repository, then run a new browser sync. Full steps are in `docs/UPGRADE_TO_V2_7.md`.
+
+The collector respects access controls. It stops on blocking or rate limits and does not attempt a bypass.

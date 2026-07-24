@@ -79,9 +79,11 @@ export type PredictionDashboard = {
     pickLeagues: number;
     lowOddsUpgrades: number;
     pricedFixtures: number;
+    zeusAutoPicks: number;
   };
   bankers: Prediction[];
   predictions: Prediction[];
+  zeusAutoPicks: Prediction[];
   radarFixtures: UpcomingFixture[];
 };
 

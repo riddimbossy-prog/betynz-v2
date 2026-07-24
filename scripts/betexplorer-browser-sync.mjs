@@ -17,6 +17,8 @@ const REQUEST_DELAY_MS = Math.max(1400, Number(process.env.BETEXPLORER_BROWSER_R
 const NO_NEW_FIXTURE_STOP = Math.max(12, Number(process.env.BETEXPLORER_NO_NEW_STOP || 30));
 const MIN_LEAGUE_PAGES = DRY_RUN ? 1 : Math.max(20, Math.min(150, Number(process.env.BETEXPLORER_MIN_LEAGUE_PAGES || 60)));
 const REQUEST_JITTER_MS = Math.max(0, Number(process.env.BETEXPLORER_BROWSER_JITTER_MS || 700));
+const INTELLIGENCE_TAB_LIMIT = Math.max(0, Math.min(4, Number(process.env.BETEXPLORER_INTELLIGENCE_TAB_LIMIT || 2)));
+const visitedIntelligenceUrls = new Set();
 
 if (!API_URL || !ADMIN_TOKEN) {
   console.error('API_URL and ADMIN_TOKEN are required.');
@@ -75,6 +77,11 @@ async function postRenderedPage(pageUrl, html) {
   return apiPost(endpoint, DRY_RUN
     ? { date: FROM_DATE, pageUrl, html }
     : { from: FROM_DATE, to: TO_DATE, pageUrl, html });
+}
+
+async function postRenderedStreakPage(pageUrl, html) {
+  const endpoint = DRY_RUN ? '/api/v1/admin/parse-betexplorer-streak-html' : '/api/v1/admin/ingest-betexplorer-streak-html';
+  return apiPost(endpoint, { snapshotDate: FROM_DATE, pageUrl, html });
 }
 
 async function openPage(context, requestedUrl) {
@@ -168,6 +175,27 @@ async function discoverFixtureTab(page) {
   });
 }
 
+async function discoverIntelligenceTabs(page) {
+  return page.evaluate(() => {
+    const byUrl = new Map();
+    for (const anchor of [...document.querySelectorAll('a[href]')]) {
+      const text = String(anchor.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const href = anchor.getAttribute('href') || '';
+      const combined = `${text} ${href.toLowerCase()}`;
+      if (!/(streak|form table|ht\/?ft|half.?time.*full.?time|standings.*form)/.test(combined)) continue;
+      try {
+        const url = new URL(href, location.href);
+        if (!(url.hostname === 'betexplorer.com' || url.hostname.endsWith('.betexplorer.com'))) continue;
+        url.hash = '';
+        byUrl.set(url.toString(), { url: url.toString(), title: text || 'streak intelligence' });
+      } catch {
+        // Ignore malformed links.
+      }
+    }
+    return [...byUrl.values()];
+  });
+}
+
 async function captureDiagnostics(page, index, label, apiResult) {
   await mkdir(DIAGNOSTIC_DIR, { recursive: true });
   const safe = label.replace(/[^a-z0-9-]+/gi, '-').slice(0, 80);
@@ -220,7 +248,9 @@ const report = {
     predictions: 0,
     fullPicks: 0,
     provisionalPicks: 0,
-    bankers: 0
+    bankers: 0,
+    streakSnapshots: 0,
+    intelligencePages: 0
   }
 };
 const fixtureIds = new Set();
@@ -278,8 +308,42 @@ async function processUrl(rawUrl, label) {
 
   const links = await discoverLeagueLinks(opened.page).catch(() => []);
   const fixtureTab = label.startsWith('league:') ? await discoverFixtureTab(opened.page).catch(() => null) : null;
+  const intelligenceTabs = label.startsWith('league:') ? await discoverIntelligenceTabs(opened.page).catch(() => []) : [];
   await opened.page.close();
-  return { newFixtures, links, fixtureTab, blocked: opened.blocked };
+  return { newFixtures, links, fixtureTab, intelligenceTabs, blocked: opened.blocked };
+}
+
+async function processIntelligenceUrl(rawUrl, label) {
+  const requestedUrl = allowedBetExplorerUrl(rawUrl);
+  if (!requestedUrl || visitedIntelligenceUrls.has(requestedUrl)) return { snapshots: 0, blocked: false };
+  visitedIntelligenceUrls.add(requestedUrl);
+  const opened = await openPage(context, requestedUrl);
+  report.pagesVisited += 1;
+  diagnosticIndex += 1;
+  let apiResult = { status: 0, ok: false, body: { error: opened.error || 'No HTML captured.' } };
+  if (opened.html.length >= 500 && !opened.blocked) apiResult = await postRenderedStreakPage(opened.finalUrl, opened.html);
+  if (DRY_RUN && opened.html.length >= 500) await captureDiagnostics(opened.page, diagnosticIndex, label, apiResult);
+  const snapshots = Number(apiResult.body?.snapshots || 0);
+  report.totals.streakSnapshots += snapshots;
+  report.totals.intelligencePages += 1;
+  report.pages.push({
+    label,
+    requestedUrl,
+    finalUrl: opened.finalUrl,
+    status: opened.status,
+    blocked: opened.blocked,
+    htmlBytes: Buffer.byteLength(opened.html || '', 'utf8'),
+    apiStatus: apiResult.status,
+    streakSnapshots: snapshots,
+    streakRows: Number(apiResult.body?.rows || 0),
+    error: apiResult.body?.error || opened.error || undefined
+  });
+  await opened.page.close();
+  if (opened.blocked) {
+    report.blocked = true;
+    report.partial = fixtureIds.size > 0;
+  }
+  return { snapshots, blocked: opened.blocked };
 }
 
 try {
@@ -306,6 +370,13 @@ try {
         result.newFixtures += tabResult.newFixtures;
       }
 
+      for (const intelligenceTab of (result.intelligenceTabs || []).slice(0, INTELLIGENCE_TAB_LIMIT)) {
+        await sleep(REQUEST_DELAY_MS + Math.floor(Math.random() * (REQUEST_JITTER_MS + 1)));
+        const intelligenceResult = await processIntelligenceUrl(intelligenceTab.url, `streak:${entry.title || index + 1}:${intelligenceTab.title}`);
+        if (intelligenceResult.blocked) break;
+      }
+      if (report.blocked) break;
+
       noNewStreak = result.newFixtures > 0 ? 0 : noNewStreak + 1;
       if (!DRY_RUN && report.selectedLeaguePages >= MIN_LEAGUE_PAGES && noNewStreak >= NO_NEW_FIXTURE_STOP && fixtureIds.size > 0) break;
     }
@@ -315,13 +386,15 @@ try {
     const rebuilt = await apiPost('/api/v1/admin/rebuild-predictions', { from: FROM_DATE, to: TO_DATE });
     if (!rebuilt.ok) throw new Error(rebuilt.body?.error || `Prediction rebuild failed with HTTP ${rebuilt.status}`);
     report.totals = {
+      ...report.totals,
       fixtures: Number(rebuilt.body?.fixtures || 0),
       fixtureLeagues: Number(rebuilt.body?.fixtureLeagues || 0),
       fixturesWith1X2: Number(rebuilt.body?.fixturesWith1X2 || 0),
       predictions: Number(rebuilt.body?.predictions || 0),
       fullPicks: Number(rebuilt.body?.fullPicks || 0),
       provisionalPicks: Number(rebuilt.body?.provisionalPicks || 0),
-      bankers: Number(rebuilt.body?.bankers || 0)
+      bankers: Number(rebuilt.body?.bankers || 0),
+      streakSnapshots: Math.max(report.totals.streakSnapshots, Number(rebuilt.body?.streakSnapshots || 0))
     };
   } else {
     report.totals.fixtures = fixtureIds.size || Math.max(0, ...report.pages.map((page) => page.fixtures || 0));
