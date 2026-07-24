@@ -173,10 +173,13 @@ export type PredictionDashboard = {
     pricedFixtures: number;
     zeusAutoPicks: number;
     streakFavorites: number;
+    aresCandidates: number;
+    aresWatchlist: number;
   };
   bankers: PredictionRecord[];
   predictions: PredictionRecord[];
   zeusAutoPicks: PredictionRecord[];
   streakFavorites: PredictionRecord[];
+  aresWatchlist: PredictionRecord[];
   radarFixtures: UpcomingFixture[];
 };

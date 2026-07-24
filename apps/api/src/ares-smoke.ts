@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { analyzeFixture, ENGINE_VERSION } from './engine.js';
+import { analyzeAresFixture, analyzeFixture, ARES_ENGINE_VERSION, ENGINE_VERSION } from './engine.js';
 import type { UpcomingFixture } from './forecast-types.js';
 import type { NormalizedMatch } from './types.js';
 
@@ -159,6 +159,31 @@ assert.equal(provisionalAres.qualification, 'ARES_STREAK_FAVOURITE');
 assert.equal(provisionalAres.tier, 'provisional');
 assert.equal(provisionalAres.banker, false);
 
+
+const refinedAres = analyzeAresFixture(fixture, matches);
+if (!refinedAres) throw new Error('Expected independent Ares assessment for the sub-1.60 favorite.');
+assert.equal(refinedAres.engineVersion, ARES_ENGINE_VERSION);
+assert.equal(refinedAres.qualification, 'ARES_STREAK_FAVOURITE');
+assert(['ELITE', 'STRONG'].includes(String(refinedAres.evidence.aresGrade)));
+
+const watchlistFixture: UpcomingFixture = {
+  ...fixture,
+  id: 'ares-watchlist-fixture',
+  leagueCode: 'NEW',
+  leagueName: 'New Ares League',
+  homeTeam: 'New Favorite FC',
+  awayTeam: 'New Opponent FC',
+  dataQuality: 60,
+  odds: { home: 1.48, draw: 4.2, away: 6.4 }
+};
+const watchlist = analyzeAresFixture(watchlistFixture, matches);
+if (!watchlist) throw new Error('Expected every complete sub-1.60 favorite to enter the Ares candidate feed.');
+assert.equal(watchlist.qualification, 'ARES_WATCHLIST');
+assert.equal(watchlist.banker, false);
+
+const refinedBoundary = analyzeAresFixture({ ...fixture, id: 'ares-refined-160-boundary', odds: { home: 1.60, draw: 4, away: 6 } }, matches);
+assert.equal(refinedBoundary, null, 'Exactly 1.60 must not enter the refined Ares candidate feed.');
+
 const boundary = analyzeFixture({ ...fixture, id: 'ares-160-boundary', odds: { home: 1.60, draw: 4, away: 6 } }, matches);
 assert.notEqual(boundary?.qualification, 'ARES_STREAK_FAVOURITE', 'Exactly 1.60 must not enter the Ares feed.');
 
@@ -170,5 +195,8 @@ console.log(JSON.stringify({
   qualification: prediction.qualification,
   aresScore: prediction.evidence.aresScore,
   boundary160Excluded: true,
-  provisionalFallback: provisionalAres.selection
+  provisionalFallback: provisionalAres.selection,
+  refinedEngineVersion: ARES_ENGINE_VERSION,
+  refinedGrade: refinedAres.evidence.aresGrade,
+  watchlistVisible: watchlist.qualification
 }, null, 2));

@@ -1,5 +1,5 @@
 import { fetchMultiLeagueUpcomingFixtures, fetchRescueUpcomingFixtures, mergeProviderFixtures, type ProviderSyncReport } from './fixture-provider.js';
-import { analyzeFixtureBattle, ENGINE_VERSION } from './engine.js';
+import { analyzeAresFixture, analyzeFixtureBattle, ARES_ENGINE_VERSION, ENGINE_VERSION } from './engine.js';
 import {
   allMatches,
   clearPredictionsForWindow,
@@ -70,12 +70,19 @@ export async function rebuildPredictions(from?: string, to?: string) {
   ]);
 
   const battles = fixtures.map((fixture) => analyzeFixtureBattle(fixture, historicalMatches, externalStreakSnapshots));
-  const predictions = battles.flatMap((battle) => battle.prediction ? [battle.prediction] : []);
+  const primaryPredictions = battles.flatMap((battle) => battle.prediction ? [battle.prediction] : []);
+  const aresAssessments = fixtures
+    .map((fixture) => analyzeAresFixture(fixture, historicalMatches, externalStreakSnapshots))
+    .filter((record): record is NonNullable<typeof record> => Boolean(record));
+  const predictions = [...primaryPredictions, ...aresAssessments];
   const rejections = battles.flatMap((battle) => battle.rejection ? [battle.rejection] : []);
   const snapshots = battles.flatMap((battle) => battle.snapshots);
   const confrontations = battles.flatMap((battle) => battle.confrontation ? [battle.confrontation] : []);
 
-  await clearPredictionsForWindow(start, end, ENGINE_VERSION);
+  await Promise.all([
+    clearPredictionsForWindow(start, end, ENGINE_VERSION),
+    clearPredictionsForWindow(start, end, ARES_ENGINE_VERSION)
+  ]);
   await Promise.all([
     upsertPredictions(predictions),
     replaceRejectedBattles(start, end, ENGINE_VERSION, rejections),
@@ -83,16 +90,21 @@ export async function rebuildPredictions(from?: string, to?: string) {
     upsertConfrontationRecords(confrontations)
   ]);
 
+  const aresPicks = aresAssessments.filter((prediction) => prediction.qualification === 'ARES_STREAK_FAVOURITE');
+  const aresWatchlist = aresAssessments.filter((prediction) => prediction.qualification === 'ARES_WATCHLIST');
   return {
     window: { from: start, to: end },
     fixtures: fixtures.length,
     fixturesWith1X2: pricedFixtures(fixtures),
     fixtureLeagues: new Set(fixtures.map((fixture) => `${fixture.country}|${fixture.leagueName}`)).size,
-    predictions: predictions.length,
-    fullPicks: predictions.filter((prediction) => prediction.tier === 'full').length,
-    provisionalPicks: predictions.filter((prediction) => prediction.tier === 'provisional').length,
-    bankers: predictions.filter((prediction) => prediction.banker).length,
-    lowOddsUpgrades: predictions.filter((prediction) => prediction.upgraded).length,
+    predictions: primaryPredictions.length,
+    fullPicks: primaryPredictions.filter((prediction) => prediction.tier === 'full').length,
+    provisionalPicks: primaryPredictions.filter((prediction) => prediction.tier === 'provisional').length,
+    bankers: primaryPredictions.filter((prediction) => prediction.banker).length,
+    lowOddsUpgrades: primaryPredictions.filter((prediction) => prediction.upgraded).length,
+    aresCandidates: aresAssessments.length,
+    aresPicks: aresPicks.length,
+    aresWatchlist: aresWatchlist.length,
     rejectedBattles: rejections.length,
     streakSnapshots: snapshots.length,
     confrontationRecords: confrontations.length,
@@ -121,7 +133,9 @@ async function rebuildFromRetainedFixtures(from: string, to: string, failure: un
   }
 
   const currentPredictions = existingPredictions.filter((prediction) => prediction.engineVersion === ENGINE_VERSION);
-  const rebuilt = currentPredictions.length
+  const currentAres = existingPredictions.filter((prediction) => prediction.engineVersion === ARES_ENGINE_VERSION);
+  const hasCurrentRows = currentPredictions.length > 0 || currentAres.length > 0;
+  const rebuilt = hasCurrentRows
     ? {
         window: { from, to },
         fixtures: retained.length,
@@ -132,6 +146,9 @@ async function rebuildFromRetainedFixtures(from: string, to: string, failure: un
         provisionalPicks: currentPredictions.filter((prediction) => prediction.tier === 'provisional').length,
         bankers: currentPredictions.filter((prediction) => prediction.banker && prediction.tier === 'full').length,
         lowOddsUpgrades: currentPredictions.filter((prediction) => prediction.upgraded).length,
+        aresCandidates: currentAres.length,
+        aresPicks: currentAres.filter((prediction) => prediction.qualification === 'ARES_STREAK_FAVOURITE').length,
+        aresWatchlist: currentAres.filter((prediction) => prediction.qualification === 'ARES_WATCHLIST').length,
         rejectedBattles: 0,
         streakSnapshots: 0,
         confrontationRecords: 0,
@@ -146,8 +163,8 @@ async function rebuildFromRetainedFixtures(from: string, to: string, failure: un
     window: { from, to },
     fixtures: retained.length,
     pricedFixtures: pricedFixtures(retained),
-    message: currentPredictions.length
-      ? `Fresh collection failed, so Betynz kept ${retained.length} existing fixtures and ${currentPredictions.length} current-engine picks. ${message}`
+    message: hasCurrentRows
+      ? `Fresh collection failed, so Betynz kept ${retained.length} existing fixtures, ${currentPredictions.length} Zeus picks and ${currentAres.length} Ares assessments. ${message}`
       : `Fresh collection failed, so Betynz kept and rebuilt from ${retained.length} existing database fixtures. ${message}`,
     providerReport
   };
@@ -239,7 +256,9 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
     listUpcomingFixtures(start, end)
   ]);
 
-  const hasCurrentEngineRows = allPredictions.some((prediction) => prediction.engineVersion === ENGINE_VERSION);
+  const hasCurrentPrimaryRows = allPredictions.some((prediction) => prediction.engineVersion === ENGINE_VERSION);
+  const hasCurrentAresRows = allPredictions.some((prediction) => prediction.engineVersion === ARES_ENGINE_VERSION);
+  const hasCurrentEngineRows = hasCurrentPrimaryRows || hasCurrentAresRows;
   const needsCurrentEngineRows = sourceName() === 'supabase' && fixtures.length > 0 && !hasCurrentEngineRows;
 
   if (needsCurrentEngineRows) {
@@ -259,13 +278,15 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
     .filter((fixture) => Boolean(fixture.odds.home && fixture.odds.draw && fixture.odds.away))
     .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
   const currentEnginePredictions = allPredictions.filter((prediction) => prediction.engineVersion === ENGINE_VERSION);
+  const currentAresPredictions = allPredictions.filter((prediction) => prediction.engineVersion === ARES_ENGINE_VERSION);
+  const legacyPrimaryPredictions = allPredictions.filter((prediction) => !prediction.engineVersion.startsWith('ares-streak-favourites-'));
   const fallbackEngineVersion = currentEnginePredictions.length === 0
-    ? [...allPredictions].sort((a, b) => b.runAt.localeCompare(a.runAt))[0]?.engineVersion
+    ? [...legacyPrimaryPredictions].sort((a, b) => b.runAt.localeCompare(a.runAt))[0]?.engineVersion
     : undefined;
   const activeEngineVersion = fallbackEngineVersion || ENGINE_VERSION;
   const activePredictions = currentEnginePredictions.length > 0
     ? currentEnginePredictions
-    : allPredictions.filter((prediction) => prediction.engineVersion === activeEngineVersion);
+    : legacyPrimaryPredictions.filter((prediction) => prediction.engineVersion === activeEngineVersion);
   const sorted = activePredictions.sort((a, b) => a.kickoff.localeCompare(b.kickoff));
   const bankers = [...sorted]
     .filter((prediction) => prediction.banker && prediction.tier === 'full')
@@ -278,16 +299,20 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
       if (bankerDifference) return bankerDifference;
       return b.confidence + b.edge * 0.6 - (a.confidence + a.edge * 0.6) || a.kickoff.localeCompare(b.kickoff);
     });
-  const streakFavorites = [...sorted]
+  const streakFavorites = [...currentAresPredictions]
     .filter((prediction) => prediction.qualification === 'ARES_STREAK_FAVOURITE')
     .sort((a, b) => Number(b.evidence.aresScore ?? 0) - Number(a.evidence.aresScore ?? 0)
       || b.confidence - a.confidence
+      || a.kickoff.localeCompare(b.kickoff));
+  const aresWatchlist = [...currentAresPredictions]
+    .filter((prediction) => prediction.qualification === 'ARES_WATCHLIST')
+    .sort((a, b) => Number(b.evidence.aresScore ?? 0) - Number(a.evidence.aresScore ?? 0)
       || a.kickoff.localeCompare(b.kickoff));
   return {
     source: sourceName(),
     generatedAt: new Date().toISOString(),
     engineVersion: activeEngineVersion,
-    currentEngineReady: currentEnginePredictions.length > 0,
+    currentEngineReady: hasCurrentEngineRows,
     rebuilding: Boolean(lazyRebuildPromise),
     dataStatus: lastSyncStatus,
     window: { from: start, to: end, days },
@@ -302,12 +327,15 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
       lowOddsUpgrades: sorted.filter((prediction) => prediction.upgraded).length,
       pricedFixtures: radarFixtures.length,
       zeusAutoPicks: zeusAutoPicks.length,
-      streakFavorites: streakFavorites.length
+      streakFavorites: streakFavorites.length,
+      aresCandidates: currentAresPredictions.length,
+      aresWatchlist: aresWatchlist.length
     },
     bankers,
     predictions: sorted,
     zeusAutoPicks,
     streakFavorites,
+    aresWatchlist,
     radarFixtures
   };
 }

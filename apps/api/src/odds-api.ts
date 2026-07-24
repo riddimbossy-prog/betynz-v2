@@ -138,7 +138,7 @@ async function apiGet<T>(path: string) {
       signal: controller.signal,
       headers: {
         accept: 'application/json',
-        'user-agent': 'Betynz-Odds-Rescue/2.8.1'
+        'user-agent': 'Betynz-Odds-Rescue/2.8.2'
       }
     });
     const text = await response.text();

@@ -209,6 +209,7 @@ export async function listPendingPredictions(from: string, to: string): Promise<
     .from('predictions')
     .select('*')
     .eq('settled_status', 'pending')
+    .neq('qualification', 'ARES_WATCHLIST')
     .gte('match_date', from)
     .lte('match_date', to)
     .limit(5000);
@@ -216,12 +217,18 @@ export async function listPendingPredictions(from: string, to: string): Promise<
   return (data ?? []).map(dbToPrediction);
 }
 
-export async function updatePredictionSettlement(fixtureId: string, status: 'won' | 'lost' | 'void') {
+export async function updatePredictionSettlement(
+  fixtureId: string,
+  status: 'won' | 'lost' | 'void',
+  engineVersion?: string
+) {
   if (!supabase) return;
-  const { error } = await supabase
+  let query = supabase
     .from('predictions')
     .update({ settled_status: status, settled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('fixture_id', fixtureId);
+  if (engineVersion) query = query.eq('engine_version', engineVersion);
+  const { error } = await query;
   if (error) throw error;
 }
 
