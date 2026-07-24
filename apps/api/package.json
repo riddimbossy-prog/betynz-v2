@@ -1,7 +1,7 @@
 {
   "name": "@betynz/api",
   "private": true,
-  "version": "2.8.0",
+  "version": "2.8.1",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -11,7 +11,8 @@
     "test:engine": "tsx src/engine-smoke.ts",
     "test:betexplorer-parser": "tsx src/betexplorer-smoke.ts",
     "test:streak-parser": "tsx src/streak-parser-smoke.ts",
-    "test:ares": "tsx src/ares-smoke.ts"
+    "test:ares": "tsx src/ares-smoke.ts",
+    "test:sync-rescue": "tsx src/odds-api-smoke.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",

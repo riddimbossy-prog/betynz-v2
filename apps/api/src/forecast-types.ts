@@ -151,6 +151,15 @@ export type PredictionDashboard = {
   engineVersion: string;
   currentEngineReady: boolean;
   rebuilding: boolean;
+  dataStatus: {
+    at: string;
+    ok: boolean;
+    source: 'fresh-provider' | 'provider-rescue' | 'retained-database' | 'none';
+    window: { from: string; to: string };
+    fixtures: number;
+    pricedFixtures: number;
+    message: string;
+  } | null;
   window: { from: string; to: string; days: string[] };
   metrics: {
     fixtures: number;

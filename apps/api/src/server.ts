@@ -7,7 +7,7 @@ import { allMatches, listMatches, listRejectedBattles, listUpcomingFixtures, sou
 import { buildOddsBands } from './patterns.js';
 import { importFootballDataUrl } from './importer.js';
 import { ENGINE_VERSION } from './engine.js';
-import { getPredictionDashboard, predictionWindow, rebuildPredictions, syncUpcomingPredictions } from './prediction-service.js';
+import { getPredictionDashboard, predictionSyncStatus, predictionWindow, rebuildPredictions, rescueUpcomingPredictions, syncUpcomingPredictions } from './prediction-service.js';
 import { providerConfiguration } from './fixture-provider.js';
 import { fetchBetExplorerFixtures, parseBetExplorerHtmlDetailed } from './betexplorer.js';
 import { parseBetExplorerStreakHtml } from './betexplorer-streaks.js';
@@ -27,12 +27,13 @@ app.get('/api/v1/health', (_req: express.Request, res: express.Response) => res.
   engineVersion: ENGINE_VERSION,
   predictionWindow: predictionWindow(),
   providers: providerConfiguration(),
+  predictionSync: predictionSyncStatus(),
   time: new Date().toISOString()
 }));
 
 
 app.get('/api/v1/providers/status', (_req: express.Request, res: express.Response) => {
-  res.json(providerConfiguration());
+  res.json({ ...providerConfiguration(), predictionSync: predictionSyncStatus() });
 });
 
 app.get('/api/v1/matches', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -304,6 +305,17 @@ app.post('/api/v1/admin/sync-upcoming', async (req: express.Request, res: expres
   try {
     if (!authorizeAdmin(req, res)) return;
     res.json(await syncUpcomingPredictions());
+  } catch (error) { next(error); }
+});
+
+app.post('/api/v1/admin/rescue-upcoming', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    if (!authorizeAdmin(req, res)) return;
+    const body = z.object({
+      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
+    }).parse(req.body ?? {});
+    res.json(await rescueUpcomingPredictions(body.from, body.to));
   } catch (error) { next(error); }
 });
 

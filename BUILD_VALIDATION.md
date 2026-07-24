@@ -1,21 +1,24 @@
-# Betynz v2.8.0 Build Validation
+# Betynz v2.8.1 Build Validation
 
 Validated in the build sandbox on 24 July 2026.
 
 ## Passed
 
-- Ares engine and its local TypeScript dependency graph passed strict TypeScript checks.
-- Prediction dashboard service passed strict TypeScript checks using dependency stubs for unavailable external packages.
-- React application, API client and web types passed strict TypeScript checks using UI dependency stubs.
-- All 26 TypeScript and TSX source files passed transpile/syntax checks.
-- JSON files parsed successfully.
-- Render/GitHub YAML files parsed successfully.
-- Browser-sync JavaScript passed `node --check`.
-- Ares full-history smoke test passed at favorite odds 1.55.
-- Ares provisional thin-league fallback smoke test passed.
-- The strict upper boundary test confirmed that odds exactly 1.60 are excluded.
-- The smoke test confirmed Ares outputs `ARES_STREAK_FAVOURITE` and never promotes the provisional fallback to Banker.
+- All 28 TypeScript/TSX source files under `apps/api/src` and `apps/web/src` passed syntax parsing.
+- The complete API source passed a strict TypeScript semantic check using declarations for unavailable external packages.
+- The complete React source passed a strict TypeScript semantic check using declarations for unavailable UI packages.
+- All 6 JSON files parsed successfully.
+- All 4 Render/GitHub YAML files parsed successfully.
+- Browser collector and service-worker JavaScript passed `node --check`.
+- Base Zeus engine smoke test passed.
+- Ares full-history favorite test passed at odds `1.55`.
+- The Ares boundary test confirmed odds exactly `1.60` are rejected.
+- The Ares thin-league fallback remained Provisional.
+- The Odds API rescue smoke test matched teams and kickoff time and filled Home/Draw/Away odds.
+- Static assertions confirmed direct-date-first collection, the rescue endpoint, retained-database protection, automatic provider rescue and engine version `zeus-chronos-ares-2.8.1`.
 
 ## Not run in the sandbox
 
-A complete `npm install && npm run build` was not run because this environment has no external npm network access and the repository does not contain `node_modules`. Render or GitHub will install the declared dependencies during deployment.
+- Live requests to BetExplorer, API-Football, The Odds API, Supabase and the deployed Render service were not possible because external network access and project secrets are unavailable here.
+- A complete `npm install && npm run build` was not run because the sandbox cannot download npm dependencies and the source package does not include `node_modules`.
+- The actual Playwright workflow will run in GitHub Actions, where Chromium and npm dependencies are installed.

@@ -30,9 +30,10 @@ import type { HistoricalDashboard, Prediction, PredictionDashboard, UpcomingFixt
 const emptyPredictions: PredictionDashboard = {
   source: 'offline',
   generatedAt: new Date().toISOString(),
-  engineVersion: 'zeus-chronos-ares-2.8.0',
+  engineVersion: 'zeus-chronos-ares-2.8.1',
   currentEngineReady: false,
   rebuilding: false,
+  dataStatus: null,
   window: { from: '', to: '', days: [] },
   metrics: { fixtures: 0, picks: 0, fullPicks: 0, provisionalPicks: 0, bankers: 0, leagues: 0, pickLeagues: 0, lowOddsUpgrades: 0, pricedFixtures: 0, zeusAutoPicks: 0, streakFavorites: 0 },
   bankers: [],
@@ -283,6 +284,17 @@ export default function App() {
       .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
   }, [data.radarFixtures, selectedDate, query]);
   const selectedLabel = selectedDate ? dayLabel(selectedDate, data.window.days.indexOf(selectedDate)) : { short: 'Today', date: '' };
+  const dataSourceLabel = data.dataStatus?.source === 'provider-rescue'
+    ? 'Rescue feed active'
+    : data.dataStatus?.source === 'retained-database'
+      ? 'Protected saved feed'
+      : data.dataStatus?.source === 'fresh-provider'
+        ? 'Fresh provider feed'
+        : data.currentEngineReady
+          ? 'Engine version'
+          : data.rebuilding
+            ? 'Engine syncing'
+            : 'Fallback feed';
 
   const toggleList = (fixtureId: string) => {
     setAnalysisList((current) => {
@@ -323,7 +335,7 @@ export default function App() {
       <main id="top">
         <section className="hero">
           <div className="hero-copy">
-            <span className="eyebrow"><Sparkles size={14} /> ZEUS + ARES AUTO PICKS 2.8</span>
+            <span className="eyebrow"><Sparkles size={14} /> ZEUS + ARES AUTO PICKS 2.8.1</span>
             <h1>One battle. One tip.<br /><span>Ares finds the strongest sub-1.60 streak favorites.</span></h1>
             <p>Zeus still makes every market compete, while Ares identifies clear 1X2 favorites priced from 1.19 to 1.59 only when the favorite's positive streak and the opponent's negative streak agree.</p>
             <div className="hero-actions">
@@ -365,9 +377,16 @@ export default function App() {
         <section className="metrics-row">
           <article><span><Target /></span><div><small>{selectedLabel.short} qualified picks</small><strong>{datePredictions.length}</strong></div></article>
           <article><span><Trophy /></span><div><small>{selectedLabel.short} bankers</small><strong>{bankers.length}</strong></div></article>
-          <article><span><BrainCircuit /></span><div><small>{data.currentEngineReady ? 'Engine version' : data.rebuilding ? 'Engine syncing' : 'Fallback feed'}</small><strong>{data.engineVersion.split('-').at(-1) || '2.8.0'}</strong></div></article>
+          <article><span><BrainCircuit /></span><div><small>{dataSourceLabel}</small><strong>{data.engineVersion.split('-').at(-1) || '2.8.1'}</strong></div></article>
           <article><span><Target /></span><div><small>{selectedLabel.short} Ares favorites</small><strong>{streakFavorites.length}</strong></div></article>
         </section>
+
+        {data.dataStatus && data.dataStatus.source !== 'fresh-provider' && (
+          <section className={`sync-status-banner ${data.dataStatus.source === 'retained-database' ? 'retained' : 'rescued'}`}>
+            <Activity size={18} />
+            <div><strong>{data.dataStatus.source === 'retained-database' ? 'Saved fixture protection is active' : 'Automatic provider rescue is active'}</strong><span>{data.dataStatus.message}</span></div>
+          </section>
+        )}
 
         <section className="content-section ares-section" id="ares-favorites">
           <div className="section-heading">

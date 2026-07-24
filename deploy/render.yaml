@@ -17,14 +17,10 @@ services:
         sync: false
       - key: ADMIN_IMPORT_TOKEN
         generateValue: true
-      - key: API_FOOTBALL_KEY
-        sync: false
-      - key: API_FOOTBALL_BASE_URL
-        value: https://v3.football.api-sports.io
-      - key: API_FOOTBALL_MAX_ODDS_PAGES
-        value: 50
       - key: FIXTURE_PROVIDER
         value: betexplorer
+      - key: AUTO_PROVIDER_RESCUE
+        value: true
       - key: BETEXPLORER_ENABLED
         value: true
       - key: BETEXPLORER_BASE_URL
@@ -38,16 +34,40 @@ services:
       - key: BETEXPLORER_RATE_MS
         value: 1800
       - key: BETEXPLORER_TIMEOUT_MS
-        value: 25000
+        value: 30000
       - key: BETEXPLORER_MAX_PAGES
         value: 24
       - key: BETEXPLORER_UTC_OFFSET_MINUTES
         value: 0
-      - key: PREDICTION_DAYS
-        value: 6
-      - key: PREDICTION_TIMEZONE
+      - key: API_FOOTBALL_KEY
+        sync: false
+      - key: API_FOOTBALL_BASE_URL
+        value: https://v3.football.api-sports.io
+      - key: API_FOOTBALL_TIMEZONE
         value: Africa/Accra
+      - key: API_FOOTBALL_MAX_ODDS_PAGES
+        value: 50
       - key: API_FOOTBALL_LEAGUE_IDS
         sync: false
       - key: API_FOOTBALL_SEASON
         sync: false
+      - key: ODDS_API_ENABLED
+        value: true
+      - key: ODDS_API_KEY
+        sync: false
+      - key: ODDS_API_BASE_URL
+        value: https://api.the-odds-api.com/v4
+      - key: ODDS_API_REGIONS
+        value: eu,uk
+      - key: ODDS_API_MAX_SPORTS
+        value: 45
+      - key: ODDS_API_SPORT_KEYS
+        sync: false
+      - key: ODDS_API_BOOKMAKERS
+        sync: false
+      - key: ODDS_API_TIMEOUT_MS
+        value: 20000
+      - key: PREDICTION_DAYS
+        value: 6
+      - key: PREDICTION_TIMEZONE
+        value: Africa/Accra

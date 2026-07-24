@@ -13,7 +13,6 @@
 - Requires at least two confirmations and one core favorite-versus-opponent confrontation.
 - Rejects favorite no-win/loss runs, opponent win/unbeaten contradictions, opposite directional signals, thin samples, weak historical fit, and excessive Leonidas contradiction.
 - Adds `ARES_STREAK_FAVOURITE` qualification and Ares evidence fields to published predictions.
-- Adds a provisional Ares fallback for leagues with fewer than 120 local matches when venue streak samples, global historical price profiles, and all four safety checks still pass; these picks can never be Bankers.
 - Adds `streakFavorites` and `metrics.streakFavorites` to the predictions API.
 - Adds a dedicated responsive **Ares Streak Favorites** page section and explanation badge.
 - PWA cache upgraded to `betynz-shell-v2-8-0`.

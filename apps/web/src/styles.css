@@ -608,3 +608,25 @@ main { width: min(1380px, calc(100% - 38px)); margin: 0 auto; }
 @media (max-width: 680px) {
   .mobile-nav a, .mobile-nav button { font-size: 9px; }
 }
+
+
+/* v2.8.1 provider rescue status */
+.sync-status-banner {
+  margin: 0 auto 18px;
+  width: min(1180px, calc(100% - 32px));
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 174, 0, 0.32);
+  border-radius: 14px;
+  background: rgba(255, 174, 0, 0.08);
+}
+.sync-status-banner.retained { border-color: rgba(114, 180, 255, 0.34); background: rgba(65, 133, 214, 0.10); }
+.sync-status-banner svg { flex: 0 0 auto; margin-top: 2px; }
+.sync-status-banner div { display: grid; gap: 4px; }
+.sync-status-banner strong { font-size: 0.92rem; }
+.sync-status-banner span { color: var(--muted, #aeb6c6); font-size: 0.82rem; line-height: 1.45; }
+@media (max-width: 640px) {
+  .sync-status-banner { width: min(100% - 20px, 1180px); padding: 12px; }
+}

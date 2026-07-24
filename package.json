@@ -1,7 +1,7 @@
 {
   "name": "betynz-chronos-fusion",
   "private": true,
-  "version": "2.8.0",
+  "version": "2.8.1",
   "workspaces": [
     "apps/web",
     "apps/api"
@@ -14,7 +14,8 @@
     "test:engine": "npm run test:engine -w apps/api",
     "test:betexplorer-parser": "npm run test:betexplorer-parser -w apps/api",
     "test:streak-parser": "npm run test:streak-parser -w apps/api",
-    "test:ares": "npm run test:ares -w apps/api"
+    "test:ares": "npm run test:ares -w apps/api",
+    "test:sync-rescue": "npm run test:sync-rescue -w apps/api"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

@@ -783,26 +783,37 @@ export async function fetchBetExplorerFixtures(from: string, to: string) {
     }
   };
 
-  // First inspect BetExplorer's football landing pages. They sometimes contain the full upcoming board
-  // or links to the currently supported daily URLs.
-  for (const url of discoveryUrls()) {
-    if (report.requestedPages >= maxPages) break;
-    allFixtures.push(...await requestPage(url, from, true));
-  }
-
-  // Then request each day using discovered links and several configurable URL templates.
+  // v2.8.1 rescue order: request direct date pages first so the football landing page
+  // cannot stop the entire collection run when it is slow or unavailable.
   for (const date of datesBetween(from, to)) {
     if (report.requestedPages >= maxPages) break;
-    const candidates = [
-      ...(discoveredLinks.get(date) || []),
-      ...fixtureTemplates().map((template) => renderTemplate(template, date))
-    ];
-    let foundForDate = allFixtures.some((fixture) => fixture.date === date && fixture.odds.home && fixture.odds.draw && fixture.odds.away);
-    for (const candidate of [...new Set(candidates)]) {
+    let foundForDate = false;
+    for (const candidate of fixtureTemplates().map((template) => renderTemplate(template, date))) {
       if (foundForDate || report.requestedPages >= maxPages) break;
       const parsed = await requestPage(candidate, date);
       allFixtures.push(...parsed);
       if (parsed.some((fixture) => fixture.date === date && fixture.odds.home && fixture.odds.draw && fixture.odds.away)) foundForDate = true;
+    }
+  }
+
+  // Landing pages are secondary discovery sources. Use them only when direct date pages
+  // did not produce a complete priced board, then revisit discovered daily links.
+  const pricedDates = new Set(allFixtures
+    .filter((fixture) => fixture.odds.home && fixture.odds.draw && fixture.odds.away)
+    .map((fixture) => fixture.date));
+  if (pricedDates.size < datesBetween(from, to).length) {
+    for (const url of discoveryUrls()) {
+      if (report.requestedPages >= maxPages) break;
+      allFixtures.push(...await requestPage(url, from, true));
+    }
+    for (const date of datesBetween(from, to)) {
+      if (report.requestedPages >= maxPages || pricedDates.has(date)) continue;
+      for (const candidate of discoveredLinks.get(date) || []) {
+        if (report.requestedPages >= maxPages) break;
+        const parsed = await requestPage(candidate, date);
+        allFixtures.push(...parsed);
+        if (parsed.some((fixture) => fixture.date === date && fixture.odds.home && fixture.odds.draw && fixture.odds.away)) break;
+      }
     }
   }
 
