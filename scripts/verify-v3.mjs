@@ -42,7 +42,7 @@ const migration7 = files['supabase/migrations/007_olympian_roles.sql'];
 const migration8 = files['supabase/migrations/008_pipeline_hotfix.sql'];
 
 const checks = [
-  ['Hotfix engine version is 3.0.3', olympianVersion.includes("olympian-roles-3.0.3")],
+  ['Hotfix engine version is 3.0.4', olympianVersion.includes("olympian-roles-3.0.4")],
   ['Zeus odds gate is strictly below 1.60', olympianVersion.includes('ZEUS_MAX_ODDS_EXCLUSIVE = 1.60') && godPicks.includes('pick.odds < ZEUS_MAX_ODDS_EXCLUSIVE')],
   ['Zeus aggregates banker picks only', godPicks.includes('.filter((pick) => pick.banker)')],
   ['Chronos, Athena and Ares feed Zeus', predictionService.includes('...chronosPicks, ...athenaPicks, ...aresPicks')],
@@ -72,4 +72,4 @@ if (failed.length) {
   console.error(JSON.stringify({ ok: false, failed: failed.map(([name]) => name) }, null, 2));
   process.exit(1);
 }
-console.log(JSON.stringify({ ok: true, checks: checks.length, version: '3.0.3' }, null, 2));
+console.log(JSON.stringify({ ok: true, checks: checks.length, version: '3.0.4' }, null, 2));

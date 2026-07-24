@@ -31,6 +31,8 @@ services:
         value: 0.95
       - key: ODDS_API_FALLBACK_MIN_EXTENDED_COVERAGE
         value: 0.60
+      - key: ODDS_API_INCLUDE_UNMATCHED_FIXTURES
+        value: false
       - key: ODDS_API_REGIONS
         value: eu,uk
       - key: ODDS_API_MARKETS
@@ -50,7 +52,7 @@ services:
       - key: API_FOOTBALL_HISTORY_DAYS
         value: 365
       - key: API_FOOTBALL_HISTORY_MAX_LEAGUES
-        value: 18
+        value: 36
       - key: API_FOOTBALL_HISTORY_CONCURRENCY
         value: 3
       - key: API_FOOTBALL_HISTORY_MIN_TEAM_MATCHES

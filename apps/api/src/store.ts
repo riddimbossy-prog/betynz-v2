@@ -122,6 +122,18 @@ export async function upsertUpcomingFixtures(fixtures: UpcomingFixture[]) {
   return rows.length;
 }
 
+
+export async function replaceUpcomingFixturesForWindow(from: string, to: string, fixtures: UpcomingFixture[]) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error: deleteError } = await supabase
+    .from('upcoming_fixtures')
+    .delete()
+    .gte('match_date', from)
+    .lte('match_date', to);
+  if (deleteError) throw deleteError;
+  return upsertUpcomingFixtures(fixtures);
+}
+
 export async function listUpcomingFixtures(from: string, to: string): Promise<UpcomingFixture[]> {
   if (!supabase) return [];
   const { data, error } = await supabase

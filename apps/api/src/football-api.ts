@@ -237,6 +237,8 @@ export type HistoricalBootstrapReport = {
     leagueName: string;
     season: string;
     upcomingFixtures: number;
+    pricedFixtures?: number;
+    zeusEligibleFixtures?: number;
     existingMatches: number;
     fetchedMatches: number;
     currentSeasonFetched?: number;
@@ -351,6 +353,8 @@ export async function fetchHistoricalMatchesForUpcoming(
     season: string;
     fixtures: UpcomingFixture[];
     teams: Set<string>;
+    pricedFixtures: number;
+    zeusEligibleFixtures: number;
   }>();
   for (const fixture of fixtures) {
     const leagueId = Number(fixture.leagueId);
@@ -364,9 +368,14 @@ export async function fetchHistoricalMatchesForUpcoming(
       leagueName: fixture.leagueName,
       season,
       fixtures: [],
-      teams: new Set<string>()
+      teams: new Set<string>(),
+      pricedFixtures: 0,
+      zeusEligibleFixtures: 0
     };
     group.fixtures.push(fixture);
+    const odds = Object.values(fixture.odds).filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 1);
+    if (odds.length) group.pricedFixtures += 1;
+    if (odds.some((value) => value < 1.60)) group.zeusEligibleFixtures += 1;
     group.teams.add(compactTeam(fixture.homeTeam));
     group.teams.add(compactTeam(fixture.awayTeam));
     grouped.set(key, group);
@@ -374,7 +383,7 @@ export async function fetchHistoricalMatchesForUpcoming(
 
   const minTeamMatches = boundedInteger('API_FOOTBALL_HISTORY_MIN_TEAM_MATCHES', 6, 3, 20);
   const minLeagueMatches = boundedInteger('API_FOOTBALL_HISTORY_MIN_LEAGUE_MATCHES', 40, 12, 500);
-  const maxLeagues = boundedInteger('API_FOOTBALL_HISTORY_MAX_LEAGUES', 18, 1, 80);
+  const maxLeagues = boundedInteger('API_FOOTBALL_HISTORY_MAX_LEAGUES', 36, 1, 80);
   const historyDays = boundedInteger('API_FOOTBALL_HISTORY_DAYS', 540, 90, 900);
   const concurrency = boundedInteger('API_FOOTBALL_HISTORY_CONCURRENCY', 3, 1, 8);
   const previousSeasonEnabled = booleanEnv('API_FOOTBALL_HISTORY_PREVIOUS_SEASON_ENABLED', true);
@@ -402,7 +411,15 @@ export async function fetchHistoricalMatchesForUpcoming(
 
   const selected = candidates
     .filter((group) => group.needsHistory)
-    .sort((a, b) => b.fixtures.length - a.fixtures.length || a.existingMatches - b.existingMatches)
+    // The old ordering favoured leagues with many fixtures even when none had
+    // usable prices. Hydrate leagues that can actually publish first, then
+    // fill remaining capacity with the broader fixture pool.
+    .sort((a, b) =>
+      b.zeusEligibleFixtures - a.zeusEligibleFixtures
+      || b.pricedFixtures - a.pricedFixtures
+      || b.fixtures.length - a.fixtures.length
+      || a.existingMatches - b.existingMatches
+    )
     .slice(0, maxLeagues);
 
   const nowDate = new Date().toISOString().slice(0, 10);
@@ -471,6 +488,8 @@ export async function fetchHistoricalMatchesForUpcoming(
       leagueName: result.group.leagueName,
       season: result.group.season,
       upcomingFixtures: result.group.fixtures.length,
+      pricedFixtures: result.group.pricedFixtures,
+      zeusEligibleFixtures: result.group.zeusEligibleFixtures,
       existingMatches: result.group.existingMatches,
       fetchedMatches: result.matches.length,
       currentSeasonFetched: result.currentSeasonFetched,

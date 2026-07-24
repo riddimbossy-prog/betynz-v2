@@ -17,7 +17,7 @@ import { providerConfiguration } from './fixture-provider.js';
 import { fetchBetExplorerFixtures, parseBetExplorerHtmlDetailed } from './betexplorer.js';
 import { parseBetExplorerStreakHtml } from './betexplorer-streaks.js';
 import { enrichHistoricalMatchesWithOddsApi } from './odds-api.js';
-import { pipelineDiagnostics, requestPipelineRebuild, startAutomaticPipeline } from './pipeline-runtime.js';
+import { pipelineDiagnostics, publicPipelineStatus, requestPipelineRebuild, startAutomaticPipeline } from './pipeline-runtime.js';
 
 const app = express();
 const port = Number(process.env.PORT || 8787);
@@ -42,6 +42,11 @@ app.get('/api/v1/health', (_req: express.Request, res: express.Response) => res.
 
 app.get('/api/v1/providers/status', (_req: express.Request, res: express.Response) => {
   res.json(providerConfiguration());
+});
+
+app.get('/api/v1/pipeline/status', (_req: express.Request, res: express.Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(publicPipelineStatus());
 });
 
 app.get('/api/v1/matches', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -131,7 +136,7 @@ app.post('/api/v1/predictions/refresh', async (_req: express.Request, res: expre
 
 app.get('/api/v1/gods/:god', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   try {
-    const god = z.enum(['zeus', 'chronos', 'athena', 'ares']).parse(req.params.god);
+    const god = z.enum(['zeus', 'chronos', 'athena', 'ares']).parse(req.params.god) as 'zeus' | 'chronos' | 'athena' | 'ares';
     const query = z.object({ date: z.string().optional() }).parse(req.query);
     const defaults = predictionWindow();
     const date = query.date || defaults.from;

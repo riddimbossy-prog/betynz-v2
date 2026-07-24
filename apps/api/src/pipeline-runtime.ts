@@ -79,6 +79,10 @@ function compactResult(value: Awaited<ReturnType<typeof syncUpcomingPredictions>
     apiFootballFixtures: value.providers.apiFootball.fixtures,
     oddsApiFallbackUsed: value.providers.oddsApi.usedAsFallback,
     oddsApiFixtures: value.providers.oddsApi.fixtures,
+    oddsApiMatchedToPrimary: value.providers.oddsApi.matchedToPrimary,
+    oddsApiUnmatched: value.providers.oddsApi.unmatched,
+    oddsApiAddedUnmatched: value.providers.oddsApi.addedUnmatched,
+    oddsApiIncludeUnmatched: value.providers.oddsApi.includeUnmatched,
     oddsApiTriggerReasons: value.providers.oddsApi.triggerReasons,
     apiFootball1X2Coverage: value.providers.oddsApi.primaryCoverage,
     apiFootballExtendedCoverage: value.providers.oddsApi.extendedCoverage,
@@ -88,6 +92,9 @@ function compactResult(value: Awaited<ReturnType<typeof syncUpcomingPredictions>
     historyLeaguesRequested: value.historyBootstrap.requestedLeagues,
     historyMatchesFetched: value.historyBootstrap.matchesFetched,
     historyCoverage: value.historyCoverage,
+    fixtureHistoryCoverage: value.fixtureHistoryCoverage,
+    rejectionsByStage: value.rejectionsByStage,
+    topRejectionReasons: value.topRejectionReasons,
     historyLeagueDetails: value.historyBootstrap.leagues,
     historyWarnings: value.historyBootstrap.warnings,
     warnings: value.providers.warnings
@@ -215,5 +222,38 @@ export function pipelineDiagnostics() {
       publicRefreshCooldownMs: numberEnv('PIPELINE_PUBLIC_REFRESH_COOLDOWN_MS', 300_000, 15_000, 3_600_000)
     },
     providers: providerConfiguration()
+  };
+}
+
+export function publicPipelineStatus() {
+  const latest = recentRuns[0] ?? null;
+  const successful = recentRuns.find((run) => run.status === 'succeeded') ?? null;
+  const failed = recentRuns.find((run) => run.status === 'failed') ?? null;
+  return {
+    engineVersion: OLYMPIAN_ENGINE_VERSION,
+    now: new Date().toISOString(),
+    running: Boolean(activeRunPromise),
+    latestRun: latest ? {
+      trigger: latest.trigger,
+      status: latest.status,
+      startedAt: latest.startedAt,
+      completedAt: latest.completedAt,
+      durationMs: latest.durationMs,
+      result: latest.result ?? null,
+      error: latest.error ?? null
+    } : null,
+    lastSuccessfulRun: successful ? {
+      trigger: successful.trigger,
+      startedAt: successful.startedAt,
+      completedAt: successful.completedAt,
+      durationMs: successful.durationMs,
+      result: successful.result ?? null
+    } : null,
+    lastFailure: failed ? {
+      trigger: failed.trigger,
+      startedAt: failed.startedAt,
+      completedAt: failed.completedAt,
+      error: failed.error ?? 'Pipeline failed.'
+    } : null
   };
 }

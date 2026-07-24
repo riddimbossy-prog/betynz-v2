@@ -22,15 +22,16 @@ import {
   replaceAthenaShadowRuns,
   replaceGodPicks,
   replaceRejectedBattles,
+  replaceUpcomingFixturesForWindow,
   sourceName,
   upsertConfrontationRecords,
   upsertMatches,
   upsertPredictions,
-  upsertStreakSnapshots,
-  upsertUpcomingFixtures
+  upsertStreakSnapshots
 } from './store.js';
 import type { GodKey, GodPublicPick, PredictionDashboard } from './forecast-types.js';
 import { isPipelineRunning } from './pipeline-state.js';
+import { leagueKey, teamKey } from './identity.js';
 
 function dateInTimeZone(timeZone = process.env.PREDICTION_TIMEZONE || 'Africa/Accra') {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -90,11 +91,47 @@ export async function rebuildPredictions(from?: string, to?: string) {
     && (match.odds.openingUnder25 ?? match.odds.closingUnder25)
   )).length;
 
+  const teamHistory = new Map<string, number>();
+  const teamHtFtHistory = new Map<string, number>();
+  const leagueHistory = new Map<string, number>();
+  for (const match of historicalMatches) {
+    const home = teamKey(match.homeTeam);
+    const away = teamKey(match.awayTeam);
+    teamHistory.set(home, (teamHistory.get(home) || 0) + 1);
+    teamHistory.set(away, (teamHistory.get(away) || 0) + 1);
+    const hasHtFt = typeof match.halfTimeHomeGoals === 'number' && typeof match.halfTimeAwayGoals === 'number';
+    if (hasHtFt) {
+      teamHtFtHistory.set(home, (teamHtFtHistory.get(home) || 0) + 1);
+      teamHtFtHistory.set(away, (teamHtFtHistory.get(away) || 0) + 1);
+    }
+    const league = leagueKey(match.leagueName || match.leagueCode);
+    leagueHistory.set(league, (leagueHistory.get(league) || 0) + 1);
+  }
+  const fixtureHistoryCoverage = {
+    bothTeamsAtLeast4: fixtures.filter((fixture) => (teamHistory.get(teamKey(fixture.homeTeam)) || 0) >= 4 && (teamHistory.get(teamKey(fixture.awayTeam)) || 0) >= 4).length,
+    bothTeamsAtLeast6: fixtures.filter((fixture) => (teamHistory.get(teamKey(fixture.homeTeam)) || 0) >= 6 && (teamHistory.get(teamKey(fixture.awayTeam)) || 0) >= 6).length,
+    bothTeamsHtFtAtLeast4: fixtures.filter((fixture) => (teamHtFtHistory.get(teamKey(fixture.homeTeam)) || 0) >= 4 && (teamHtFtHistory.get(teamKey(fixture.awayTeam)) || 0) >= 4).length,
+    leagueAtLeast24: fixtures.filter((fixture) => (leagueHistory.get(leagueKey(fixture.leagueName || fixture.leagueCode)) || 0) >= 24).length,
+    leagueAtLeast40: fixtures.filter((fixture) => (leagueHistory.get(leagueKey(fixture.leagueName || fixture.leagueCode)) || 0) >= 40).length
+  };
+
   const battles = fixtures.map((fixture) => analyzeFixtureBattle(fixture, historicalMatches, externalStreakSnapshots));
   const predictions = battles.flatMap((battle) => battle.prediction ? [battle.prediction] : []);
   const rejections = battles.flatMap((battle) => battle.rejection ? [battle.rejection] : []);
   const snapshots = battles.flatMap((battle) => battle.snapshots);
   const confrontations = battles.flatMap((battle) => battle.confrontation ? [battle.confrontation] : []);
+  const rejectionsByStage = rejections.reduce<Record<string, number>>((counts, rejection) => {
+    counts[rejection.rejectionStage] = (counts[rejection.rejectionStage] || 0) + 1;
+    return counts;
+  }, {});
+  const rejectionReasonCounts = new Map<string, number>();
+  for (const rejection of rejections) {
+    for (const reason of rejection.reasons) rejectionReasonCounts.set(reason, (rejectionReasonCounts.get(reason) || 0) + 1);
+  }
+  const topRejectionReasons = [...rejectionReasonCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12)
+    .map(([reason, count]) => ({ reason, count }));
 
   const athenaRuns = enabled('ATHENA_ENGINE_ENABLED', true)
     ? fixtures.map((fixture, index) => buildAthenaShadowRun(fixture, historicalMatches, battles[index]?.snapshots ?? []))
@@ -146,6 +183,9 @@ export async function rebuildPredictions(from?: string, to?: string) {
       with1X2Odds: historicalMatchesWith1X2Odds,
       withTotalsOdds: historicalMatchesWithTotalsOdds
     },
+    fixtureHistoryCoverage,
+    rejectionsByStage,
+    topRejectionReasons,
     chronosPicks: chronosPicks.length,
     athenaRuns: athenaRuns.length,
     athenaPicks: athenaPicks.length,
@@ -161,7 +201,9 @@ export async function rebuildPredictions(from?: string, to?: string) {
 export async function syncUpcomingPredictions() {
   const window = predictionWindow();
   const providerResult = await fetchMultiLeagueUpcomingFixtures(window.from, window.to);
-  await upsertUpcomingFixtures(providerResult.fixtures);
+  // Replace the full active window so provider changes cannot leave stale,
+  // disconnected Odds API or BetExplorer duplicates in the engine input.
+  await replaceUpcomingFixturesForWindow(window.from, window.to, providerResult.fixtures);
 
   let historyBootstrap: HistoricalBootstrapReport = {
     enabled: String(process.env.API_FOOTBALL_HISTORY_ENABLED ?? 'true').toLowerCase() !== 'false',

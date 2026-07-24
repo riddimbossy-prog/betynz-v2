@@ -2,6 +2,7 @@ import { fetchUpcomingFixtures as fetchApiFootballFixtures } from './football-ap
 import { betExplorerConfiguration, fetchBetExplorerFixtures, type BetExplorerSyncReport } from './betexplorer.js';
 import { fetchOddsApiFixtures, oddsApiConfiguration } from './odds-api.js';
 import type { UpcomingFixture, UpcomingOdds } from './forecast-types.js';
+import { teamKey } from './identity.js';
 
 export type FixtureProviderMode = 'api-football' | 'betexplorer' | 'hybrid';
 export type ProviderSyncReport = {
@@ -9,7 +10,7 @@ export type ProviderSyncReport = {
   fixtures: number;
   apiFootball: { enabled: boolean; fixtures: number; error?: string };
   betExplorer: BetExplorerSyncReport;
-  oddsApi: { enabled: boolean; usedAsFallback: boolean; fixtures: number; fixturesWith1X2: number; requests: number; error?: string; warnings: string[]; triggerReasons: string[]; primaryCoverage: number; extendedCoverage: number };
+  oddsApi: { enabled: boolean; usedAsFallback: boolean; fixtures: number; fixturesWith1X2: number; requests: number; error?: string; warnings: string[]; triggerReasons: string[]; primaryCoverage: number; extendedCoverage: number; matchedToPrimary: number; unmatched: number; addedUnmatched: number; includeUnmatched: boolean };
   matchedAcrossProviders: number;
   unmatchedBetExplorer: number;
   unmatchedApiFootball: number;
@@ -26,7 +27,7 @@ function mode(): FixtureProviderMode {
 function aliases() {
   try {
     const raw = JSON.parse(process.env.TEAM_ALIASES_JSON || '{}') as Record<string, string>;
-    return new Map(Object.entries(raw).map(([key, value]) => [normalizeName(key), normalizeName(value)]));
+    return new Map(Object.entries(raw).map(([key, value]) => [teamKey(key), teamKey(value)]));
   } catch {
     return new Map<string, string>();
   }
@@ -42,8 +43,31 @@ function normalizeName(value: string) {
 }
 
 function canonicalName(value: string, map: Map<string, string>) {
-  const normalized = normalizeName(value);
+  const normalized = teamKey(value);
   return map.get(normalized) || normalized;
+}
+
+function normalizedWords(value: string) {
+  return value
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/&/g, ' and ')
+    .replace(/\butd\b/g, ' united ')
+    .replace(/\bst\b/g, ' saint ')
+    .replace(/\b(fc|cf|sc|afc|club|calcio|fk|sk|the)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function variantSignature(value: string) {
+  const words = normalizedWords(value);
+  const age = words.find((word) => /^u\d{2}$/.test(word)) || '';
+  const women = words.some((word) => ['women', 'woman', 'ladies', 'femenino', 'feminino', 'w'].includes(word)) ? 'women' : '';
+  const reserve = words.some((word) => ['reserves', 'reserve', 'ii', 'b', 'youth'].includes(word)) ? 'reserve' : '';
+  return [age, women, reserve].filter(Boolean).join('|');
 }
 
 function diceSimilarity(a: string, b: string) {
@@ -65,13 +89,61 @@ function diceSimilarity(a: string, b: string) {
   return total ? (2 * overlap) / total : 0;
 }
 
+function tokenSimilarity(a: string, b: string) {
+  const left = new Set(normalizedWords(a));
+  const right = new Set(normalizedWords(b));
+  if (!left.size || !right.size) return 0;
+  let overlap = 0;
+  for (const token of left) if (right.has(token)) overlap += 1;
+  return overlap / (left.size + right.size - overlap);
+}
+
+function teamSimilarity(a: string, b: string, map: Map<string, string>) {
+  const left = canonicalName(a, map);
+  const right = canonicalName(b, map);
+  if (left === right) return 1;
+  const containment = left.length >= 5 && right.length >= 5 && (left.includes(right) || right.includes(left))
+    ? Math.min(left.length, right.length) / Math.max(left.length, right.length)
+    : 0;
+  return Math.max(diceSimilarity(left, right), tokenSimilarity(a, b) * 0.96, containment * 0.94);
+}
+
+function dateDistanceDays(a: UpcomingFixture, b: UpcomingFixture) {
+  const left = new Date(`${a.date}T12:00:00Z`).getTime();
+  const right = new Date(`${b.date}T12:00:00Z`).getTime();
+  return Math.round(Math.abs(left - right) / 86_400_000);
+}
+
+function fixtureMatchScore(a: UpcomingFixture, b: UpcomingFixture, map: Map<string, string>) {
+  const variantAHome = variantSignature(a.homeTeam);
+  const variantBHome = variantSignature(b.homeTeam);
+  const variantAAway = variantSignature(a.awayTeam);
+  const variantBAway = variantSignature(b.awayTeam);
+  if ((variantAHome || variantBHome) && variantAHome !== variantBHome) return null;
+  if ((variantAAway || variantBAway) && variantAAway !== variantBAway) return null;
+
+  const days = dateDistanceDays(a, b);
+  if (days > 1) return null;
+  const kickoffA = new Date(a.kickoff).getTime();
+  const kickoffB = new Date(b.kickoff).getTime();
+  if (!Number.isFinite(kickoffA) || !Number.isFinite(kickoffB)) return null;
+  const timeDifferenceMs = Math.abs(kickoffA - kickoffB);
+  if (timeDifferenceMs > 18 * 60 * 60 * 1000) return null;
+
+  const home = teamSimilarity(a.homeTeam, b.homeTeam, map);
+  const away = teamSimilarity(a.awayTeam, b.awayTeam, map);
+  const minimum = Math.min(home, away);
+  const average = (home + away) / 2;
+  if (minimum < 0.62 || average < 0.74) return null;
+
+  const timeScore = Math.max(0, 1 - timeDifferenceMs / (18 * 60 * 60 * 1000));
+  const exactDateBonus = days === 0 ? 0.035 : 0;
+  const score = average * 0.82 + minimum * 0.10 + timeScore * 0.08 + exactDateBonus;
+  return score >= 0.76 ? { score, timeDifferenceMs, home, away } : null;
+}
+
 function sameFixture(a: UpcomingFixture, b: UpcomingFixture, map: Map<string, string>) {
-  if (a.date !== b.date) return false;
-  const home = diceSimilarity(canonicalName(a.homeTeam, map), canonicalName(b.homeTeam, map));
-  const away = diceSimilarity(canonicalName(a.awayTeam, map), canonicalName(b.awayTeam, map));
-  if (home < 0.72 || away < 0.72) return false;
-  const timeDifference = Math.abs(new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime());
-  return timeDifference <= 4 * 60 * 60 * 1000;
+  return Boolean(fixtureMatchScore(a, b, map));
 }
 
 function mergeOdds(apiOdds: UpcomingOdds, betExplorerOdds: UpcomingOdds) {
@@ -136,37 +208,56 @@ function mergeFixtures(apiFixtures: UpcomingFixture[], betFixtures: UpcomingFixt
 }
 
 
-function mergeOddsApiFallback(existingFixtures: UpcomingFixture[], oddsFixtures: UpcomingFixture[]) {
+function mergeOddsApiFallback(existingFixtures: UpcomingFixture[], oddsFixtures: UpcomingFixture[], includeUnmatched: boolean) {
   const aliasMap = aliases();
-  const usedFallback = new Set<number>();
-  const output = existingFixtures.map((existing) => {
-    let bestIndex = -1;
-    let bestScore = 0;
-    for (let index = 0; index < oddsFixtures.length; index += 1) {
-      if (usedFallback.has(index)) continue;
-      const fallback = oddsFixtures[index];
-      if (!sameFixture(existing, fallback, aliasMap)) continue;
-      const score = diceSimilarity(canonicalName(existing.homeTeam, aliasMap), canonicalName(fallback.homeTeam, aliasMap))
-        + diceSimilarity(canonicalName(existing.awayTeam, aliasMap), canonicalName(fallback.awayTeam, aliasMap));
-      if (score > bestScore) { bestScore = score; bestIndex = index; }
+  const candidates: Array<{ existingIndex: number; fallbackIndex: number; score: number; timeDifferenceMs: number }> = [];
+  for (let existingIndex = 0; existingIndex < existingFixtures.length; existingIndex += 1) {
+    for (let fallbackIndex = 0; fallbackIndex < oddsFixtures.length; fallbackIndex += 1) {
+      const match = fixtureMatchScore(existingFixtures[existingIndex], oddsFixtures[fallbackIndex], aliasMap);
+      if (match) candidates.push({ existingIndex, fallbackIndex, score: match.score, timeDifferenceMs: match.timeDifferenceMs });
     }
-    if (bestIndex < 0) return existing;
-    const fallback = oddsFixtures[bestIndex];
-    usedFallback.add(bestIndex);
+  }
+  candidates.sort((a, b) => b.score - a.score || a.timeDifferenceMs - b.timeDifferenceMs);
+
+  const usedExisting = new Set<number>();
+  const usedFallback = new Set<number>();
+  const linked = new Map<number, number>();
+  for (const candidate of candidates) {
+    if (usedExisting.has(candidate.existingIndex) || usedFallback.has(candidate.fallbackIndex)) continue;
+    usedExisting.add(candidate.existingIndex);
+    usedFallback.add(candidate.fallbackIndex);
+    linked.set(candidate.existingIndex, candidate.fallbackIndex);
+  }
+
+  const output = existingFixtures.map((existing, existingIndex) => {
+    const fallbackIndex = linked.get(existingIndex);
+    if (fallbackIndex == null) return existing;
+    const fallback = oddsFixtures[fallbackIndex];
     return {
       ...existing,
       provider: 'hybrid' as const,
       oddsSource: `${existing.oddsSource || existing.provider || 'primary'}+odds-api`,
       dataQuality: Math.min(100, Math.max(existing.dataQuality || 60, fallback.dataQuality || 70) + 4),
+      // Primary prices remain authoritative; Odds API fills the gaps.
       odds: { ...fallback.odds, ...existing.odds },
       rawOdds: { primary: existing.rawOdds ?? null, oddsApi: fallback.rawOdds ?? null },
       updatedAt: new Date().toISOString()
     };
   });
-  for (let index = 0; index < oddsFixtures.length; index += 1) {
-    if (!usedFallback.has(index)) output.push(oddsFixtures[index]);
+  let added = 0;
+  if (includeUnmatched) {
+    for (let index = 0; index < oddsFixtures.length; index += 1) {
+      if (!usedFallback.has(index)) {
+        output.push(oddsFixtures[index]);
+        added += 1;
+      }
+    }
   }
-  return { fixtures: output, matched: usedFallback.size, added: oddsFixtures.length - usedFallback.size };
+  return { fixtures: output, matched: usedFallback.size, unmatched: oddsFixtures.length - usedFallback.size, added };
+}
+
+export function matchFixtureForTesting(primary: UpcomingFixture, fallback: UpcomingFixture) {
+  return fixtureMatchScore(primary, fallback, aliases());
 }
 
 function filterFixtures(fixtures: UpcomingFixture[]) {
@@ -256,7 +347,7 @@ export async function fetchMultiLeagueUpcomingFixtures(from: string, to: string)
   let oddsApiReport = {
     enabled: Boolean(process.env.ODDS_API_KEY?.trim()), usedAsFallback: false, fixtures: 0,
     fixturesWith1X2: 0, requests: 0, warnings: [] as string[], triggerReasons,
-    primaryCoverage, extendedCoverage
+    primaryCoverage, extendedCoverage, matchedToPrimary: 0, unmatched: 0, addedUnmatched: 0, includeUnmatched: false
   };
   if (fallbackEnabled && process.env.ODDS_API_KEY?.trim() && triggerReasons.length > 0) {
     try {
@@ -265,14 +356,25 @@ export async function fetchMultiLeagueUpcomingFixtures(from: string, to: string)
       oddsApiReport = {
         enabled: result.report.enabled, usedAsFallback: true, fixtures: result.report.fixtures,
         fixturesWith1X2: result.report.fixturesWith1X2, requests: result.report.requests,
-        warnings: result.report.warnings, triggerReasons, primaryCoverage, extendedCoverage
+        warnings: result.report.warnings, triggerReasons, primaryCoverage, extendedCoverage, matchedToPrimary: 0, unmatched: result.report.fixtures, addedUnmatched: 0, includeUnmatched: false
       };
     } catch (error) {
       oddsApiError = error instanceof Error ? error.message : String(error);
       oddsApiReport = { ...oddsApiReport, usedAsFallback: true, warnings: [oddsApiError] };
     }
   }
-  const oddsMerged = oddsApiFixtures.length ? mergeOddsApiFallback(merged.fixtures, oddsApiFixtures) : { fixtures: merged.fixtures, matched: 0, added: 0 };
+  const includeUnmatchedFallback = merged.fixtures.length === 0
+    || String(process.env.ODDS_API_INCLUDE_UNMATCHED_FIXTURES ?? 'false').toLowerCase() === 'true';
+  const oddsMerged = oddsApiFixtures.length
+    ? mergeOddsApiFallback(merged.fixtures, oddsApiFixtures, includeUnmatchedFallback)
+    : { fixtures: merged.fixtures, matched: 0, unmatched: 0, added: 0 };
+  oddsApiReport = {
+    ...oddsApiReport,
+    matchedToPrimary: oddsMerged.matched,
+    unmatched: oddsMerged.unmatched,
+    addedUnmatched: oddsMerged.added,
+    includeUnmatched: includeUnmatchedFallback
+  };
   const fixtures = filterFixtures(oddsMerged.fixtures)
     .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
   const warnings = [...betExplorerResult.report.warnings, ...oddsApiReport.warnings];
@@ -286,9 +388,9 @@ export async function fetchMultiLeagueUpcomingFixtures(from: string, to: string)
     apiFootball: { enabled: selectedMode !== 'betexplorer', fixtures: apiFixtures.length, error: apiError },
     betExplorer: betExplorerResult.report,
     oddsApi: { ...oddsApiReport, error: oddsApiError },
-    matchedAcrossProviders: merged.matched,
+    matchedAcrossProviders: merged.matched + oddsMerged.matched,
     unmatchedBetExplorer: merged.unmatchedBetExplorer,
-    unmatchedApiFootball: merged.unmatchedApiFootball,
+    unmatchedApiFootball: Math.max(0, apiFixtures.length - oddsMerged.matched),
     warnings
   };
 
