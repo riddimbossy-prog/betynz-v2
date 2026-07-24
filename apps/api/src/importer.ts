@@ -3,13 +3,17 @@ import { readFile } from 'node:fs/promises';
 import { normalizeFootballDataRow } from './normalize.js';
 import { upsertMatches } from './store.js';
 import { settlePredictionsFromMatches } from './settlement.js';
+import { settleAthenaShadowRunsFromMatches } from './athena-settlement.js';
 
 export async function importCsvText(csvText: string, season: string, leagueName?: string) {
   const rows = parse(csvText, { columns: true, skip_empty_lines: true, relax_column_count: true, bom: true }) as Record<string, string>[];
   const matches = rows.filter((row) => row.Div && row.Date && row.HomeTeam && row.AwayTeam && row.FTR).map((row) => normalizeFootballDataRow(row, season, leagueName));
   const imported = await upsertMatches(matches);
-  const settled = await settlePredictionsFromMatches(matches);
-  return { imported, matches, settled };
+  const [settled, athenaSettled] = await Promise.all([
+    settlePredictionsFromMatches(matches),
+    settleAthenaShadowRunsFromMatches(matches)
+  ]);
+  return { imported, matches, settled, athenaSettled };
 }
 
 export async function importFootballDataUrl(url: string, season: string, leagueName?: string) {

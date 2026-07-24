@@ -7,7 +7,9 @@ import { allMatches, listMatches, listRejectedBattles, listUpcomingFixtures, sou
 import { buildOddsBands } from './patterns.js';
 import { importFootballDataUrl } from './importer.js';
 import { ENGINE_VERSION } from './engine.js';
-import { getPredictionDashboard, predictionSyncStatus, predictionWindow, rebuildPredictions, rescueUpcomingPredictions, syncUpcomingPredictions } from './prediction-service.js';
+import { ATHENA_ENGINE_MODE, ATHENA_ENGINE_VERSION } from './athena-transition.js';
+import { getAthenaShadowDashboard } from './athena-service.js';
+import { getPredictionDashboard, predictionWindow, rebuildPredictions, syncUpcomingPredictions } from './prediction-service.js';
 import { providerConfiguration } from './fixture-provider.js';
 import { fetchBetExplorerFixtures, parseBetExplorerHtmlDetailed } from './betexplorer.js';
 import { parseBetExplorerStreakHtml } from './betexplorer-streaks.js';
@@ -25,15 +27,15 @@ app.get('/api/v1/health', (_req: express.Request, res: express.Response) => res.
   service: 'betynz-api',
   source: sourceName(),
   engineVersion: ENGINE_VERSION,
+  athenaTransition: { version: ATHENA_ENGINE_VERSION, mode: ATHENA_ENGINE_MODE, enabled: String(process.env.ATHENA_SHADOW_ENABLED ?? 'true').toLowerCase() !== 'false' },
   predictionWindow: predictionWindow(),
   providers: providerConfiguration(),
-  predictionSync: predictionSyncStatus(),
   time: new Date().toISOString()
 }));
 
 
 app.get('/api/v1/providers/status', (_req: express.Request, res: express.Response) => {
-  res.json({ ...providerConfiguration(), predictionSync: predictionSyncStatus() });
+  res.json(providerConfiguration());
 });
 
 app.get('/api/v1/matches', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -120,6 +122,7 @@ app.get('/api/v1/dashboard', async (_req: express.Request, res: express.Response
       source: sourceName(),
       lastUpdated: new Date().toISOString(),
       engineVersion: ENGINE_VERSION,
+      athenaTransition: { version: ATHENA_ENGINE_VERSION, mode: ATHENA_ENGINE_MODE, enabled: String(process.env.ATHENA_SHADOW_ENABLED ?? 'true').toLowerCase() !== 'false' },
       metrics: {
         matches: matches.length,
         leagues,
@@ -127,7 +130,10 @@ app.get('/api/v1/dashboard', async (_req: express.Request, res: express.Response
         validated: bands.filter((band) => band.sample >= 80 && band.hitRate >= 70).length,
         upcomingFixtures: predictions.metrics.fixtures,
         futurePicks: predictions.metrics.picks,
-        bankers: predictions.metrics.bankers
+        bankers: predictions.metrics.bankers,
+        athenaShadowRuns: predictions.metrics.athenaShadowRuns,
+        athenaShadowPicks: predictions.metrics.athenaShadowPicks,
+        athenaShadowBankers: predictions.metrics.athenaShadowBankers
       },
       recentMatches: matches.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 16),
       oddsBands: bands,
@@ -143,6 +149,42 @@ function authorizeAdmin(req: express.Request, res: express.Response) {
   }
   return true;
 }
+
+
+app.get('/api/v1/admin/athena-shadow', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    if (!authorizeAdmin(req, res)) return;
+    const defaults = predictionWindow();
+    const query = z.object({
+      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      limit: z.coerce.number().min(1).max(5000).default(500)
+    }).parse(req.query);
+    const from = query.from || defaults.from;
+    const to = query.to || defaults.to;
+    res.json(await getAthenaShadowDashboard(from, to, query.limit));
+  } catch (error) { next(error); }
+});
+
+app.post('/api/v1/admin/rebuild-athena-shadow', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    if (!authorizeAdmin(req, res)) return;
+    const defaults = predictionWindow();
+    const body = z.object({
+      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
+    }).parse(req.body ?? {});
+    const result = await rebuildPredictions(body.from || defaults.from, body.to || defaults.to);
+    res.json({
+      engineVersion: ATHENA_ENGINE_VERSION,
+      mode: ATHENA_ENGINE_MODE,
+      athenaShadowRuns: result.athenaShadowRuns,
+      athenaShadowPicks: result.athenaShadowPicks,
+      athenaShadowBankers: result.athenaShadowBankers,
+      window: result.window
+    });
+  } catch (error) { next(error); }
+});
 
 app.get('/api/v1/admin/rejected-battles', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   try {
@@ -169,7 +211,7 @@ app.post('/api/v1/admin/import', async (req: express.Request, res: express.Respo
       leagueName: z.string().optional()
     }).parse(req.body);
     const result = await importFootballDataUrl(body.url, body.season, body.leagueName);
-    res.json({ imported: result.imported, settled: result.settled });
+    res.json({ imported: result.imported, settled: result.settled, athenaSettled: result.athenaSettled });
   } catch (error) { next(error); }
 });
 
@@ -305,17 +347,6 @@ app.post('/api/v1/admin/sync-upcoming', async (req: express.Request, res: expres
   try {
     if (!authorizeAdmin(req, res)) return;
     res.json(await syncUpcomingPredictions());
-  } catch (error) { next(error); }
-});
-
-app.post('/api/v1/admin/rescue-upcoming', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  try {
-    if (!authorizeAdmin(req, res)) return;
-    const body = z.object({
-      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
-    }).parse(req.body ?? {});
-    res.json(await rescueUpcomingPredictions(body.from, body.to));
   } catch (error) { next(error); }
 });
 

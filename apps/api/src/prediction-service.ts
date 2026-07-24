@@ -1,34 +1,26 @@
-import { fetchMultiLeagueUpcomingFixtures, fetchRescueUpcomingFixtures, mergeProviderFixtures, type ProviderSyncReport } from './fixture-provider.js';
-import { analyzeAresFixture, analyzeFixtureBattle, ARES_ENGINE_VERSION, ENGINE_VERSION } from './engine.js';
+import { fetchMultiLeagueUpcomingFixtures } from './fixture-provider.js';
+import { buildAthenaShadowRun } from './athena-service.js';
+import { ATHENA_ENGINE_VERSION, ATHENA_MARKETS } from './athena-transition.js';
+import { analyzeFixtureBattle, ENGINE_VERSION } from './engine.js';
 import {
   allMatches,
   clearPredictionsForWindow,
   listPredictions,
   listStreakSnapshots,
   listUpcomingFixtures,
+  listAthenaShadowRuns,
   sourceName,
   upsertConfrontationRecords,
   upsertPredictions,
   upsertStreakSnapshots,
   replaceRejectedBattles,
+  replaceAthenaShadowRuns,
   upsertUpcomingFixtures
 } from './store.js';
 import type { PredictionDashboard } from './forecast-types.js';
 
-export type PredictionSyncStatus = {
-  at: string;
-  ok: boolean;
-  source: 'fresh-provider' | 'provider-rescue' | 'retained-database' | 'none';
-  window: { from: string; to: string };
-  fixtures: number;
-  pricedFixtures: number;
-  message: string;
-  providerReport?: ProviderSyncReport;
-};
-
 let lazyRebuildPromise: Promise<void> | null = null;
 let lastLazyRebuildAttempt = 0;
-let lastSyncStatus: PredictionSyncStatus | null = null;
 const LAZY_REBUILD_COOLDOWN_MS = 10 * 60 * 1000;
 
 function dateInTimeZone(timeZone = process.env.PREDICTION_TIMEZONE || 'Africa/Accra') {
@@ -43,19 +35,11 @@ function addDays(date: string, days: number) {
   return value.toISOString().slice(0, 10);
 }
 
-function pricedFixtures<T extends { odds: { home?: number; draw?: number; away?: number } }>(fixtures: T[]) {
-  return fixtures.filter((fixture) => Boolean(fixture.odds.home && fixture.odds.draw && fixture.odds.away)).length;
-}
-
 export function predictionWindow(days = Number(process.env.PREDICTION_DAYS || 6)) {
   const count = Math.max(1, Math.min(10, days));
   const from = dateInTimeZone();
   const dates = Array.from({ length: count }, (_, index) => addDays(from, index));
   return { from, to: dates[dates.length - 1], days: dates };
-}
-
-export function predictionSyncStatus() {
-  return lastSyncStatus;
 }
 
 export async function rebuildPredictions(from?: string, to?: string) {
@@ -70,179 +54,54 @@ export async function rebuildPredictions(from?: string, to?: string) {
   ]);
 
   const battles = fixtures.map((fixture) => analyzeFixtureBattle(fixture, historicalMatches, externalStreakSnapshots));
-  const primaryPredictions = battles.flatMap((battle) => battle.prediction ? [battle.prediction] : []);
-  const aresAssessments = fixtures
-    .map((fixture) => analyzeAresFixture(fixture, historicalMatches, externalStreakSnapshots))
-    .filter((record): record is NonNullable<typeof record> => Boolean(record));
-  const predictions = [...primaryPredictions, ...aresAssessments];
+  const predictions = battles.flatMap((battle) => battle.prediction ? [battle.prediction] : []);
   const rejections = battles.flatMap((battle) => battle.rejection ? [battle.rejection] : []);
   const snapshots = battles.flatMap((battle) => battle.snapshots);
   const confrontations = battles.flatMap((battle) => battle.confrontation ? [battle.confrontation] : []);
+  const athenaEnabled = String(process.env.ATHENA_SHADOW_ENABLED ?? 'true').toLowerCase() !== 'false';
+  const athenaRuns = athenaEnabled
+    ? fixtures.map((fixture, index) => buildAthenaShadowRun(fixture, historicalMatches, battles[index]?.snapshots ?? []))
+    : [];
 
-  await Promise.all([
-    clearPredictionsForWindow(start, end, ENGINE_VERSION),
-    clearPredictionsForWindow(start, end, ARES_ENGINE_VERSION)
-  ]);
+  await clearPredictionsForWindow(start, end, ENGINE_VERSION);
   await Promise.all([
     upsertPredictions(predictions),
     replaceRejectedBattles(start, end, ENGINE_VERSION, rejections),
     upsertStreakSnapshots(snapshots),
-    upsertConfrontationRecords(confrontations)
+    upsertConfrontationRecords(confrontations),
+    replaceAthenaShadowRuns(start, end, ATHENA_ENGINE_VERSION, athenaRuns)
   ]);
 
-  const aresPicks = aresAssessments.filter((prediction) => prediction.qualification === 'ARES_STREAK_FAVOURITE');
-  const aresWatchlist = aresAssessments.filter((prediction) => prediction.qualification === 'ARES_WATCHLIST');
   return {
     window: { from: start, to: end },
     fixtures: fixtures.length,
-    fixturesWith1X2: pricedFixtures(fixtures),
+    fixturesWith1X2: fixtures.filter((fixture) => Boolean(fixture.odds.home && fixture.odds.draw && fixture.odds.away)).length,
     fixtureLeagues: new Set(fixtures.map((fixture) => `${fixture.country}|${fixture.leagueName}`)).size,
-    predictions: primaryPredictions.length,
-    fullPicks: primaryPredictions.filter((prediction) => prediction.tier === 'full').length,
-    provisionalPicks: primaryPredictions.filter((prediction) => prediction.tier === 'provisional').length,
-    bankers: primaryPredictions.filter((prediction) => prediction.banker).length,
-    lowOddsUpgrades: primaryPredictions.filter((prediction) => prediction.upgraded).length,
-    aresCandidates: aresAssessments.length,
-    aresPicks: aresPicks.length,
-    aresWatchlist: aresWatchlist.length,
+    predictions: predictions.length,
+    fullPicks: predictions.filter((prediction) => prediction.tier === 'full').length,
+    provisionalPicks: predictions.filter((prediction) => prediction.tier === 'provisional').length,
+    bankers: predictions.filter((prediction) => prediction.banker).length,
+    lowOddsUpgrades: predictions.filter((prediction) => prediction.upgraded).length,
     rejectedBattles: rejections.length,
     streakSnapshots: snapshots.length,
     confrontationRecords: confrontations.length,
-    externalStreakSnapshots: externalStreakSnapshots.length
-  };
-}
-
-async function rebuildFromRetainedFixtures(from: string, to: string, failure: unknown, providerReport?: ProviderSyncReport) {
-  const [retained, existingPredictions] = await Promise.all([
-    listUpcomingFixtures(from, to),
-    listPredictions(from, to)
-  ]);
-  if (!retained.length) {
-    const message = failure instanceof Error ? failure.message : String(failure);
-    lastSyncStatus = {
-      at: new Date().toISOString(),
-      ok: false,
-      source: 'none',
-      window: { from, to },
-      fixtures: 0,
-      pricedFixtures: 0,
-      message: `Fresh providers failed and there are no retained fixtures: ${message}`,
-      providerReport
-    };
-    throw new Error(lastSyncStatus.message);
-  }
-
-  const currentPredictions = existingPredictions.filter((prediction) => prediction.engineVersion === ENGINE_VERSION);
-  const currentAres = existingPredictions.filter((prediction) => prediction.engineVersion === ARES_ENGINE_VERSION);
-  const hasCurrentRows = currentPredictions.length > 0 || currentAres.length > 0;
-  const rebuilt = hasCurrentRows
-    ? {
-        window: { from, to },
-        fixtures: retained.length,
-        fixturesWith1X2: pricedFixtures(retained),
-        fixtureLeagues: new Set(retained.map((fixture) => `${fixture.country}|${fixture.leagueName}`)).size,
-        predictions: currentPredictions.length,
-        fullPicks: currentPredictions.filter((prediction) => prediction.tier === 'full').length,
-        provisionalPicks: currentPredictions.filter((prediction) => prediction.tier === 'provisional').length,
-        bankers: currentPredictions.filter((prediction) => prediction.banker && prediction.tier === 'full').length,
-        lowOddsUpgrades: currentPredictions.filter((prediction) => prediction.upgraded).length,
-        aresCandidates: currentAres.length,
-        aresPicks: currentAres.filter((prediction) => prediction.qualification === 'ARES_STREAK_FAVOURITE').length,
-        aresWatchlist: currentAres.filter((prediction) => prediction.qualification === 'ARES_WATCHLIST').length,
-        rejectedBattles: 0,
-        streakSnapshots: 0,
-        confrontationRecords: 0,
-        externalStreakSnapshots: 0
-      }
-    : await rebuildPredictions(from, to);
-  const message = failure instanceof Error ? failure.message : String(failure);
-  lastSyncStatus = {
-    at: new Date().toISOString(),
-    ok: true,
-    source: 'retained-database',
-    window: { from, to },
-    fixtures: retained.length,
-    pricedFixtures: pricedFixtures(retained),
-    message: hasCurrentRows
-      ? `Fresh collection failed, so Betynz kept ${retained.length} existing fixtures, ${currentPredictions.length} Zeus picks and ${currentAres.length} Ares assessments. ${message}`
-      : `Fresh collection failed, so Betynz kept and rebuilt from ${retained.length} existing database fixtures. ${message}`,
-    providerReport
-  };
-  return {
-    ...rebuilt,
-    window: { from, to, days: [] as string[] },
-    retained: true,
-    syncStatus: lastSyncStatus,
-    providers: providerReport
+    externalStreakSnapshots: externalStreakSnapshots.length,
+    athenaShadowRuns: athenaRuns.length,
+    athenaShadowPicks: athenaRuns.filter((run) => run.marketKey !== ATHENA_MARKETS.NO_PICK).length,
+    athenaShadowBankers: athenaRuns.filter((run) => run.banker).length
   };
 }
 
 export async function syncUpcomingPredictions() {
   const window = predictionWindow();
-  try {
-    const providerResult = await fetchMultiLeagueUpcomingFixtures(window.from, window.to);
-    await upsertUpcomingFixtures(providerResult.fixtures);
-    const rebuilt = await rebuildPredictions(window.from, window.to);
-    const rescued = providerResult.report.rescue.triggered || providerResult.report.selectedSource === 'api-football-rescue';
-    lastSyncStatus = {
-      at: new Date().toISOString(),
-      ok: true,
-      source: rescued ? 'provider-rescue' : 'fresh-provider',
-      window: { from: window.from, to: window.to },
-      fixtures: providerResult.fixtures.length,
-      pricedFixtures: pricedFixtures(providerResult.fixtures),
-      message: rescued
-        ? `BetExplorer needed rescue. Betynz continued with ${providerResult.report.selectedSource} and preserved the existing board.`
-        : `Fresh fixtures loaded from ${providerResult.report.selectedSource}.`,
-      providerReport: providerResult.report
-    };
-    return {
-      ...rebuilt,
-      window,
-      retained: false,
-      syncStatus: lastSyncStatus,
-      providers: providerResult.report
-    };
-  } catch (error) {
-    return rebuildFromRetainedFixtures(window.from, window.to, error);
-  }
-}
-
-export async function rescueUpcomingPredictions(from?: string, to?: string) {
-  const defaults = predictionWindow();
-  const start = from || defaults.from;
-  const end = to || defaults.to;
-  try {
-    const providerResult = await fetchRescueUpcomingFixtures(start, end);
-    if (!providerResult.fixtures.length) {
-      throw new Error(providerResult.report.warnings.join(' ') || 'Provider rescue returned zero fixtures.');
-    }
-    const existingFixtures = await listUpcomingFixtures(start, end);
-    const existingBetExplorer = existingFixtures.filter((fixture) => fixture.provider === 'betexplorer' || fixture.provider === 'hybrid');
-    const rescuedBoard = existingBetExplorer.length
-      ? mergeProviderFixtures(providerResult.fixtures, existingBetExplorer).fixtures
-      : providerResult.fixtures;
-    await upsertUpcomingFixtures(rescuedBoard);
-    const rebuilt = await rebuildPredictions(start, end);
-    lastSyncStatus = {
-      at: new Date().toISOString(),
-      ok: true,
-      source: 'provider-rescue',
-      window: { from: start, to: end },
-      fixtures: rescuedBoard.length,
-      pricedFixtures: pricedFixtures(rescuedBoard),
-      message: `Provider rescue loaded ${rescuedBoard.length} fixtures from API-Football${providerResult.report.oddsApi.matchedFixtures ? ' with The Odds API enrichment' : ''}.`,
-      providerReport: providerResult.report
-    };
-    return {
-      ...rebuilt,
-      retained: false,
-      syncStatus: lastSyncStatus,
-      providers: providerResult.report
-    };
-  } catch (error) {
-    return rebuildFromRetainedFixtures(start, end, error);
-  }
+  const providerResult = await fetchMultiLeagueUpcomingFixtures(window.from, window.to);
+  await upsertUpcomingFixtures(providerResult.fixtures);
+  const rebuilt = await rebuildPredictions(window.from, window.to);
+  return {
+    ...rebuilt,
+    window,
+    providers: providerResult.report
+  };
 }
 
 export async function getPredictionDashboard(from?: string, to?: string): Promise<PredictionDashboard> {
@@ -251,14 +110,13 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
   const end = to || defaultWindow.to;
   const days: string[] = [];
   for (let cursor = start; cursor <= end && days.length < 10; cursor = addDays(cursor, 1)) days.push(cursor);
-  const [allPredictions, fixtures] = await Promise.all([
+  const [allPredictions, fixtures, athenaShadowRuns] = await Promise.all([
     listPredictions(start, end),
-    listUpcomingFixtures(start, end)
+    listUpcomingFixtures(start, end),
+    listAthenaShadowRuns(start, end, 5000)
   ]);
 
-  const hasCurrentPrimaryRows = allPredictions.some((prediction) => prediction.engineVersion === ENGINE_VERSION);
-  const hasCurrentAresRows = allPredictions.some((prediction) => prediction.engineVersion === ARES_ENGINE_VERSION);
-  const hasCurrentEngineRows = hasCurrentPrimaryRows || hasCurrentAresRows;
+  const hasCurrentEngineRows = allPredictions.some((prediction) => prediction.engineVersion === ENGINE_VERSION);
   const needsCurrentEngineRows = sourceName() === 'supabase' && fixtures.length > 0 && !hasCurrentEngineRows;
 
   if (needsCurrentEngineRows) {
@@ -278,16 +136,15 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
     .filter((fixture) => Boolean(fixture.odds.home && fixture.odds.draw && fixture.odds.away))
     .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
   const currentEnginePredictions = allPredictions.filter((prediction) => prediction.engineVersion === ENGINE_VERSION);
-  const currentAresPredictions = allPredictions.filter((prediction) => prediction.engineVersion === ARES_ENGINE_VERSION);
-  const legacyPrimaryPredictions = allPredictions.filter((prediction) => !prediction.engineVersion.startsWith('ares-streak-favourites-'));
   const fallbackEngineVersion = currentEnginePredictions.length === 0
-    ? [...legacyPrimaryPredictions].sort((a, b) => b.runAt.localeCompare(a.runAt))[0]?.engineVersion
+    ? [...allPredictions].sort((a, b) => b.runAt.localeCompare(a.runAt))[0]?.engineVersion
     : undefined;
   const activeEngineVersion = fallbackEngineVersion || ENGINE_VERSION;
   const activePredictions = currentEnginePredictions.length > 0
     ? currentEnginePredictions
-    : legacyPrimaryPredictions.filter((prediction) => prediction.engineVersion === activeEngineVersion);
-  const sorted = activePredictions.sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+    : allPredictions.filter((prediction) => prediction.engineVersion === activeEngineVersion);
+  const sorted = activePredictions
+    .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
   const bankers = [...sorted]
     .filter((prediction) => prediction.banker && prediction.tier === 'full')
     .sort((a, b) => b.confidence - a.confidence || b.edge - a.edge);
@@ -299,22 +156,12 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
       if (bankerDifference) return bankerDifference;
       return b.confidence + b.edge * 0.6 - (a.confidence + a.edge * 0.6) || a.kickoff.localeCompare(b.kickoff);
     });
-  const streakFavorites = [...currentAresPredictions]
-    .filter((prediction) => prediction.qualification === 'ARES_STREAK_FAVOURITE')
-    .sort((a, b) => Number(b.evidence.aresScore ?? 0) - Number(a.evidence.aresScore ?? 0)
-      || b.confidence - a.confidence
-      || a.kickoff.localeCompare(b.kickoff));
-  const aresWatchlist = [...currentAresPredictions]
-    .filter((prediction) => prediction.qualification === 'ARES_WATCHLIST')
-    .sort((a, b) => Number(b.evidence.aresScore ?? 0) - Number(a.evidence.aresScore ?? 0)
-      || a.kickoff.localeCompare(b.kickoff));
   return {
     source: sourceName(),
     generatedAt: new Date().toISOString(),
     engineVersion: activeEngineVersion,
-    currentEngineReady: hasCurrentEngineRows,
+    currentEngineReady: currentEnginePredictions.length > 0,
     rebuilding: Boolean(lazyRebuildPromise),
-    dataStatus: lastSyncStatus,
     window: { from: start, to: end, days },
     metrics: {
       fixtures: fixtures.length,
@@ -327,15 +174,13 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
       lowOddsUpgrades: sorted.filter((prediction) => prediction.upgraded).length,
       pricedFixtures: radarFixtures.length,
       zeusAutoPicks: zeusAutoPicks.length,
-      streakFavorites: streakFavorites.length,
-      aresCandidates: currentAresPredictions.length,
-      aresWatchlist: aresWatchlist.length
+      athenaShadowRuns: athenaShadowRuns.length,
+      athenaShadowPicks: athenaShadowRuns.filter((run) => run.marketKey !== ATHENA_MARKETS.NO_PICK).length,
+      athenaShadowBankers: athenaShadowRuns.filter((run) => run.banker).length
     },
     bankers,
     predictions: sorted,
     zeusAutoPicks,
-    streakFavorites,
-    aresWatchlist,
     radarFixtures
   };
 }

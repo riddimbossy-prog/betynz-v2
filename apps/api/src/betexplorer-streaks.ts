@@ -1,6 +1,6 @@
 import * as cheerio from 'cheerio';
 import { createHash } from 'node:crypto';
-import type { HtFtProfile, StreakScope, StreakValues, TeamStreakSnapshot } from './streak-intelligence.js';
+import type { GoalProfile, HtFtProfile, StreakScope, StreakValues, TeamStreakSnapshot } from './streak-intelligence.js';
 
 const cleanText = (value: unknown) => String(value ?? '').replace(/\s+/g, ' ').trim();
 const normalize = (value: string) => cleanText(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -81,8 +81,14 @@ function scopeFromText(value: string): StreakScope {
   return 'overall';
 }
 
-function canonicalColumn(header: string) {
+function canonicalColumn(header: string, overUnderContext = false) {
   const value = normalize(header);
+  if (overUnderContext) {
+    if (value === 'o' || value === 'over') return 'over25';
+    if (value === 'u' || value === 'under') return 'under25';
+    if (value === 'g m' || value === 'goals match' || value === 'goals per match') return 'averageTotalGoals';
+    if (value === 'g' || value === 'goals') return 'goalsRecord';
+  }
   if (/^(team|club|participant)$/.test(value)) return 'team';
   if (/^(w|wins?|winning streak)$/.test(value)) return 'wins';
   if (/^(d|draws?|drawing streak)$/.test(value)) return 'draws';
@@ -152,7 +158,11 @@ export function parseBetExplorerStreakHtml(html: string, pageUrl: string, snapsh
     );
     const scope = scopeFromText(`${heading} ${pageUrl}`);
     const headerCells = table.find('thead th, thead [role="columnheader"], tr').first().find('th, [role="columnheader"]').toArray();
-    const columns = headerCells.map((cell: any) => canonicalColumn($(cell).text()));
+    const rawHeaders = headerCells.map((cell: any) => cleanText($(cell).text()));
+    const normalizedHeaders = rawHeaders.map((value: string) => normalize(value));
+    const overUnderContext = /over.?under|o\/u/.test(normalize(`${heading} ${pageUrl}`))
+      || (normalizedHeaders.includes('o') && normalizedHeaders.includes('u') && (normalizedHeaders.includes('g m') || normalizedHeaders.includes('g')));
+    const columns = rawHeaders.map((header: string) => canonicalColumn(header, overUnderContext));
     const teamIndex = Math.max(0, columns.indexOf('team'));
     const usefulColumns = columns.filter(Boolean);
     if (!usefulColumns.length && !table.find('[data-team]').length) continue;
@@ -164,10 +174,18 @@ export function parseBetExplorerStreakHtml(html: string, pageUrl: string, snapsh
       const team = rowTeam($, row, teamIndex);
       if (!team || /^team|club$/i.test(team)) continue;
       const values = mapFromDataAttributes(row);
+      let goalsFor: number | undefined;
+      let goalsAgainst: number | undefined;
       const cells = row.find('td, [role="cell"]').toArray();
       columns.forEach((column: string, index: number) => {
         if (!column || column === 'team' || !cells[index]) return;
-        values[column] = number($(cells[index]).text());
+        const cellText = cleanText($(cells[index]).text());
+        if (column === 'goalsRecord') {
+          const pair = cellText.match(/(\d+)\s*:\s*(\d+)/);
+          if (pair) { goalsFor = Number(pair[1]); goalsAgainst = Number(pair[2]); }
+          return;
+        }
+        values[column] = number(cellText);
       });
 
       const streaks = emptyStreaks();
@@ -183,9 +201,20 @@ export function parseBetExplorerStreakHtml(html: string, pageUrl: string, snapsh
       htft.trailToAvoidLossRate = Math.max(0, values.trailToAvoidLossRate || 0);
       finalizeHtFt(htft);
 
+      const goalSample = Math.max(0, values.sample || (values.over25 || 0) + (values.under25 || 0));
+      const goalProfile: GoalProfile | undefined = overUnderContext && goalSample > 0
+        ? {
+            sample: goalSample,
+            over25: Math.max(0, values.over25 || 0),
+            under25: Math.max(0, values.under25 || 0),
+            goalsFor,
+            goalsAgainst,
+            averageTotalGoals: Number.isFinite(values.averageTotalGoals) ? Math.max(0, values.averageTotalGoals || 0) : undefined
+          }
+        : undefined;
       const hasStreak = Object.values(streaks).some((value) => value > 0);
       const hasHtFt = htft.sample > 0 || Object.keys(htft.combinations).length > 0;
-      if (!hasStreak && !hasHtFt) continue;
+      if (!hasStreak && !hasHtFt && !goalProfile) continue;
 
       snapshots.push({
         snapshotDate,
@@ -200,7 +229,8 @@ export function parseBetExplorerStreakHtml(html: string, pageUrl: string, snapsh
         sample: Math.max(values.sample || 0, Math.max(...Object.values(streaks), 0)),
         streaks,
         adjusted: { ...streaks, opponentStrength: 1.25 },
-        htft
+        htft,
+        goalProfile
       });
       parsedRows += 1;
     }

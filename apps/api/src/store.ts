@@ -3,6 +3,7 @@ import demoMatches from '../data/demo-matches.json' with { type: 'json' };
 import type { NormalizedMatch } from './types.js';
 import type { PredictionRecord, RejectedBattle, UpcomingFixture } from './forecast-types.js';
 import type { ConfrontationRecord, TeamStreakSnapshot } from './streak-intelligence.js';
+import type { AthenaShadowRun, AthenaSettlementStatus } from './athena-types.js';
 import { teamKey } from './identity.js';
 
 const url = process.env.SUPABASE_URL;
@@ -10,13 +11,14 @@ const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase: SupabaseClient | null = url && key ? createClient(url, key, { auth: { persistSession: false } }) : null;
 const demoRejectedBattles: RejectedBattle[] = [];
 const demoStreakSnapshots: TeamStreakSnapshot[] = [];
+const demoAthenaShadowRuns: AthenaShadowRun[] = [];
 
 function isMissingOptionalIntelligenceTable(error: unknown) {
   const value = error as { code?: string; message?: string; details?: string; hint?: string } | null;
   const text = `${value?.code ?? ''} ${value?.message ?? ''} ${value?.details ?? ''} ${value?.hint ?? ''}`.toLowerCase();
   return value?.code === '42P01'
     || value?.code === 'PGRST205'
-    || ((text.includes('streak_snapshots') || text.includes('confrontation_records') || text.includes('rejected_battles'))
+    || ((text.includes('streak_snapshots') || text.includes('confrontation_records') || text.includes('rejected_battles') || text.includes('athena_shadow_runs') || text.includes('goal_profile'))
       && (text.includes('does not exist') || text.includes('schema cache') || text.includes('could not find')));
 }
 
@@ -209,7 +211,6 @@ export async function listPendingPredictions(from: string, to: string): Promise<
     .from('predictions')
     .select('*')
     .eq('settled_status', 'pending')
-    .neq('qualification', 'ARES_WATCHLIST')
     .gte('match_date', from)
     .lte('match_date', to)
     .limit(5000);
@@ -217,18 +218,12 @@ export async function listPendingPredictions(from: string, to: string): Promise<
   return (data ?? []).map(dbToPrediction);
 }
 
-export async function updatePredictionSettlement(
-  fixtureId: string,
-  status: 'won' | 'lost' | 'void',
-  engineVersion?: string
-) {
+export async function updatePredictionSettlement(fixtureId: string, status: 'won' | 'lost' | 'void') {
   if (!supabase) return;
-  let query = supabase
+  const { error } = await supabase
     .from('predictions')
     .update({ settled_status: status, settled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('fixture_id', fixtureId);
-  if (engineVersion) query = query.eq('engine_version', engineVersion);
-  const { error } = await query;
   if (error) throw error;
 }
 
@@ -244,7 +239,8 @@ function mergeStreakSnapshots(existing: TeamStreakSnapshot, incoming: TeamStreak
     sample: Math.max(existing.sample, incoming.sample),
     streaks: incomingHasStreaks ? incoming.streaks : existing.streaks,
     adjusted: incomingHasStreaks ? incoming.adjusted : existing.adjusted,
-    htft: incomingHasHtFt ? incoming.htft : existing.htft
+    htft: incomingHasHtFt ? incoming.htft : existing.htft,
+    goalProfile: incoming.goalProfile ?? existing.goalProfile
   };
 }
 
@@ -322,6 +318,7 @@ export async function upsertStreakSnapshots(snapshots: TeamStreakSnapshot[]) {
     streaks: snapshot.streaks,
     opponent_adjusted: snapshot.adjusted,
     htft: snapshot.htft,
+    goal_profile: snapshot.goalProfile ?? {},
     updated_at: new Date().toISOString()
   }));
   for (let i = 0; i < rows.length; i += 250) {
@@ -504,6 +501,180 @@ export async function listRejectedBattles(from: string, to: string, limit = 500,
 }
 
 
+export async function replaceAthenaShadowRuns(
+  from: string,
+  to: string,
+  engineVersion: string,
+  runs: AthenaShadowRun[]
+) {
+  if (!supabase) {
+    for (let index = demoAthenaShadowRuns.length - 1; index >= 0; index -= 1) {
+      const row = demoAthenaShadowRuns[index];
+      if (row.engineVersion === engineVersion && row.date >= from && row.date <= to) demoAthenaShadowRuns.splice(index, 1);
+    }
+    demoAthenaShadowRuns.push(...runs);
+    return runs.length;
+  }
+
+  const { error: deleteError } = await supabase
+    .from('athena_shadow_runs')
+    .delete()
+    .eq('engine_version', engineVersion)
+    .gte('match_date', from)
+    .lte('match_date', to);
+  if (deleteError) {
+    if (isMissingOptionalIntelligenceTable(deleteError)) {
+      warnOptionalIntelligenceFallback('athena_shadow_runs', deleteError);
+      return 0;
+    }
+    throw deleteError;
+  }
+
+  const rows = runs.map((run) => ({
+    fixture_id: run.fixtureId,
+    engine_version: run.engineVersion,
+    run_at: run.runAt,
+    match_date: run.date,
+    kickoff: run.kickoff,
+    league_code: run.leagueCode,
+    league_name: run.leagueName,
+    country: run.country,
+    home_team: run.homeTeam,
+    away_team: run.awayTeam,
+    classification: run.classification,
+    side: run.side,
+    story: run.story,
+    market_key: run.marketKey,
+    market_label: run.marketLabel,
+    score: run.score,
+    banker: run.banker,
+    reasons: run.reasons,
+    warnings: run.warnings,
+    secondary: run.secondary,
+    top_markets: run.topMarkets,
+    routes: run.routes,
+    metrics: run.metrics,
+    odds_conflict: run.oddsConflict,
+    input_source: run.inputSource,
+    settled_status: run.settledStatus ?? 'pending',
+    settled_at: run.settledAt ?? null,
+    updated_at: new Date().toISOString()
+  }));
+
+  for (let index = 0; index < rows.length; index += 250) {
+    const { error } = await supabase.from('athena_shadow_runs').upsert(rows.slice(index, index + 250), {
+      onConflict: 'fixture_id,engine_version'
+    });
+    if (error) {
+      if (isMissingOptionalIntelligenceTable(error)) {
+        warnOptionalIntelligenceFallback('athena_shadow_runs', error);
+        return 0;
+      }
+      throw error;
+    }
+  }
+  return rows.length;
+}
+
+export async function listAthenaShadowRuns(from: string, to: string, limit = 500): Promise<AthenaShadowRun[]> {
+  if (!supabase) {
+    return demoAthenaShadowRuns
+      .filter((run) => run.date >= from && run.date <= to)
+      .sort((a, b) => b.runAt.localeCompare(a.runAt))
+      .slice(0, limit);
+  }
+  const { data, error } = await supabase
+    .from('athena_shadow_runs')
+    .select('*')
+    .gte('match_date', from)
+    .lte('match_date', to)
+    .order('kickoff', { ascending: true })
+    .limit(limit);
+  if (error) {
+    if (isMissingOptionalIntelligenceTable(error)) {
+      warnOptionalIntelligenceFallback('athena_shadow_runs', error);
+      return [];
+    }
+    throw error;
+  }
+  return (data ?? []).map(dbToAthenaShadowRun);
+}
+
+export async function listPendingAthenaShadowRuns(from: string, to: string): Promise<AthenaShadowRun[]> {
+  if (!supabase) {
+    return demoAthenaShadowRuns.filter((run) => run.date >= from && run.date <= to && (run.settledStatus ?? 'pending') === 'pending');
+  }
+  const { data, error } = await supabase
+    .from('athena_shadow_runs')
+    .select('*')
+    .eq('settled_status', 'pending')
+    .gte('match_date', from)
+    .lte('match_date', to)
+    .limit(5000);
+  if (error) {
+    if (isMissingOptionalIntelligenceTable(error)) return [];
+    throw error;
+  }
+  return (data ?? []).map(dbToAthenaShadowRun);
+}
+
+export async function updateAthenaShadowSettlement(fixtureId: string, engineVersion: string, status: AthenaSettlementStatus) {
+  const settledAt = new Date().toISOString();
+  if (!supabase) {
+    const run = demoAthenaShadowRuns.find((item) => item.fixtureId === fixtureId && item.engineVersion === engineVersion);
+    if (run) {
+      run.settledStatus = status;
+      run.settledAt = settledAt;
+    }
+    return;
+  }
+  const { error } = await supabase
+    .from('athena_shadow_runs')
+    .update({ settled_status: status, settled_at: settledAt, updated_at: settledAt })
+    .eq('fixture_id', fixtureId)
+    .eq('engine_version', engineVersion);
+  if (error) {
+    if (isMissingOptionalIntelligenceTable(error)) return;
+    throw error;
+  }
+}
+
+function dbToAthenaShadowRun(row: any): AthenaShadowRun {
+  return {
+    fixtureId: row.fixture_id,
+    engineVersion: row.engine_version,
+    runAt: row.run_at,
+    date: row.match_date,
+    kickoff: row.kickoff,
+    leagueCode: row.league_code,
+    leagueName: row.league_name,
+    country: row.country ?? '',
+    homeTeam: row.home_team,
+    awayTeam: row.away_team,
+    classification: row.classification,
+    side: row.side === 'HOME' || row.side === 'AWAY' ? row.side : null,
+    story: row.story,
+    marketKey: row.market_key,
+    marketLabel: row.market_label,
+    score: Number(row.score ?? 0),
+    banker: Boolean(row.banker),
+    reasons: Array.isArray(row.reasons) ? row.reasons : [],
+    warnings: Array.isArray(row.warnings) ? row.warnings : [],
+    secondary: Array.isArray(row.secondary) ? row.secondary : [],
+    topMarkets: Array.isArray(row.top_markets) ? row.top_markets : [],
+    routes: row.routes ?? {},
+    metrics: row.metrics ?? {},
+    oddsConflict: row.odds_conflict ?? { conflict: false, favorite: null, ratio: null },
+    inputSource: row.input_source ?? {
+      homeHtFt: 'computed-history', awayHtFt: 'computed-history',
+      homeGoals: 'missing', awayGoals: 'missing', homeVenueSample: 0, awayVenueSample: 0
+    },
+    settledStatus: row.settled_status ?? 'pending',
+    settledAt: row.settled_at ?? undefined
+  };
+}
+
+
 function dbToStreakSnapshot(row: any): TeamStreakSnapshot {
   return {
     snapshotDate: row.snapshot_date,
@@ -527,7 +698,8 @@ function dbToStreakSnapshot(row: any): TeamStreakSnapshot {
       drawToWinRate: 0,
       trailToAvoidLossRate: 0,
       combinations: {}
-    }
+    },
+    goalProfile: row.goal_profile && Object.keys(row.goal_profile).length ? row.goal_profile : undefined
   };
 }
 

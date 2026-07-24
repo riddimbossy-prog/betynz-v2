@@ -71,15 +71,6 @@ export type PredictionDashboard = {
   engineVersion: string;
   currentEngineReady: boolean;
   rebuilding: boolean;
-  dataStatus: {
-    at: string;
-    ok: boolean;
-    source: 'fresh-provider' | 'provider-rescue' | 'retained-database' | 'none';
-    window: { from: string; to: string };
-    fixtures: number;
-    pricedFixtures: number;
-    message: string;
-  } | null;
   window: { from: string; to: string; days: string[] };
   metrics: {
     fixtures: number;
@@ -92,15 +83,13 @@ export type PredictionDashboard = {
     lowOddsUpgrades: number;
     pricedFixtures: number;
     zeusAutoPicks: number;
-    streakFavorites: number;
-    aresCandidates: number;
-    aresWatchlist: number;
+    athenaShadowRuns: number;
+    athenaShadowPicks: number;
+    athenaShadowBankers: number;
   };
   bankers: Prediction[];
   predictions: Prediction[];
   zeusAutoPicks: Prediction[];
-  streakFavorites: Prediction[];
-  aresWatchlist: Prediction[];
   radarFixtures: UpcomingFixture[];
 };
 

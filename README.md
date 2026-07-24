@@ -1,51 +1,34 @@
-# Betynz Zeus + Ares v2.8.2
+# Betynz v2.8.0 — Zeus + Athena Transition Shadow Engine
 
-Betynz predicts **today plus the next five days** using BetExplorer, API-Football, The Odds API, historical results, streaks and HT/FT patterns.
+This package is based on **Betynz v2.7.1 Zeus Auto Picks hotfix** and includes the fully integrated **Athena Transition Engine v1.0-RC1**.
 
-## What changed in v2.8.2
+## What is included
 
-Ares is now an independent engine instead of depending on whichever market Zeus selected for a fixture.
+- Existing Zeus/Chronos/Leonidas public prediction stack.
+- Athena Transition Engine in frozen shadow mode.
+- HT/FT route compatibility, comeback and lead-protection analysis.
+- Draw Lock, Stable Leader, Late Separation, Swing Game, High Event and Multi-Route classifications.
+- One Athena banker or `NO_PICK` per fixture.
+- Supabase shadow storage and automatic settlement.
+- BetExplorer HT/FT plus Over/Under intelligence collection.
+- Private Athena admin API and public shadow counters.
 
-Every complete 1X2 fixture with a unique favorite priced from **1.19 to 1.59** is assessed by Ares. Odds of exactly **1.60 are rejected**.
+## Install
 
-Ares now produces two separate outputs:
+```bash
+npm install
+npm run build
+npm run test:athena
+```
 
-- **Ares Picks** — favorites that pass the refined price, streak, sample and contradiction gates.
-- **Ares Watchlist** — sub-1.60 favorites that were found but are not yet picks. Each card explains the exact missing streak confirmation or contradiction.
+Before deployment, run:
 
-The refined engine accepts either:
+```text
+supabase/migrations/006_athena_transition_shadow.sql
+```
 
-- Two-sided agreement: the favorite has a positive run and the opponent has a negative run.
-- Strong one-sided agreement: a decisive favorite or opponent streak is supported by the market and a compatible directional signal.
+Read `docs/UPGRADE_TO_V2_8.md` and `docs/ATHENA_TRANSITION_V2_8.md` for deployment and verification.
 
-Historical-odds-neighbor requirements no longer block Ares because this specialist is built around current 1X2 price plus team streak confrontation. Zeus, Chronos, Athena and Leonidas continue to control the main one-tip board.
+## Important
 
-## Provider rescue retained
-
-When BetExplorer returns no usable board:
-
-1. API-Football supplies upcoming fixtures.
-2. The Odds API fills missing Home/Draw/Away prices when teams and kickoff time match safely.
-3. If every fresh provider fails, existing Supabase fixtures are retained.
-
-A failed sync never deletes valid upcoming fixtures.
-
-## Main endpoints
-
-- `GET /api/v1/health`
-- `GET /api/v1/providers/status`
-- `GET /api/v1/upcoming-fixtures`
-- `GET /api/v1/predictions`
-- `GET /api/v1/bankers?date=YYYY-MM-DD`
-- `POST /api/v1/admin/sync-upcoming`
-- `POST /api/v1/admin/rescue-upcoming`
-- `POST /api/v1/admin/rebuild-predictions`
-- `GET /api/v1/admin/rejected-battles`
-
-Admin endpoints require `x-admin-token`.
-
-## Upgrade
-
-Follow `docs/UPGRADE_TO_V2_8_2.md`. No new Supabase migration is required. Keep `supabase/migrations/005_zeus_streak_intelligence.sql` applied.
-
-The collector respects access controls. It does not bypass CAPTCHA, login requirements or rate limits.
+Athena remains hidden from normal users until the frozen 100-match shadow test is complete. No prediction is guaranteed.

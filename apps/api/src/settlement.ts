@@ -37,7 +37,7 @@ export async function settlePredictionsFromMatches(matches: NormalizedMatch[]) {
       && teamKey(candidate.awayTeam) === teamKey(prediction.awayTeam)
     );
     if (!match) continue;
-    await updatePredictionSettlement(prediction.fixtureId, settleMarket(prediction, match), prediction.engineVersion);
+    await updatePredictionSettlement(prediction.fixtureId, settleMarket(prediction, match));
     settled += 1;
   }
   return settled;

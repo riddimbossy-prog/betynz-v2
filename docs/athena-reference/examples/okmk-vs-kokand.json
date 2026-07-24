@@ -1,0 +1,18 @@
+{
+  "id": "uzb-2026-kokand-okmk",
+  "league": "Uzbekistan Super League",
+  "kickoff": "2026-07-22T16:00:00+05:00",
+  "odds": { "home": 3.05, "draw": 3.15, "away": 2.25 },
+  "home": {
+    "name": "Kokand 1912",
+    "matchesPlayed": 13,
+    "htft": { "ww": 1, "wd": 0, "wl": 0, "dw": 1, "dd": 4, "dl": 3, "lw": 0, "ld": 1, "ll": 3 },
+    "goals": { "over25": 7, "under25": 6, "averageTotalGoals": 2.4, "goalsFor": 11, "goalsAgainst": 20, "last5Over25": [true, false, false, true, true] }
+  },
+  "away": {
+    "name": "OKMK",
+    "matchesPlayed": 13,
+    "htft": { "ww": 2, "wd": 1, "wl": 0, "dw": 3, "dd": 1, "dl": 2, "lw": 1, "ld": 2, "ll": 1 },
+    "goals": { "over25": 8, "under25": 5, "averageTotalGoals": 2.9, "goalsFor": 21, "goalsAgainst": 17, "last5Over25": [true, true, false, true, true] }
+  }
+}

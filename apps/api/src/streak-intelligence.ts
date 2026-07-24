@@ -15,6 +15,16 @@ export type StreakValues = {
   under25: number;
 };
 
+export type GoalProfile = {
+  sample: number;
+  over25: number;
+  under25: number;
+  goalsFor?: number;
+  goalsAgainst?: number;
+  averageTotalGoals?: number;
+  last5Over25?: boolean[];
+};
+
 export type HtFtProfile = {
   sample: number;
   firstHalfLeadRate: number;
@@ -44,6 +54,7 @@ export type TeamStreakSnapshot = {
   streaks: StreakValues;
   adjusted: OpponentAdjustedStreaks;
   htft: HtFtProfile;
+  goalProfile?: GoalProfile;
 };
 
 export type ConfrontationSignal = {
@@ -168,6 +179,33 @@ function streakValues(rows: NormalizedMatch[], team: string): StreakValues {
   };
 }
 
+
+function goalProfile(rows: NormalizedMatch[], team: string): GoalProfile {
+  let goalsFor = 0;
+  let goalsAgainst = 0;
+  let over25 = 0;
+  const last5Over25: boolean[] = [];
+  for (const match of rows) {
+    const home = teamKey(match.homeTeam) === teamKey(team);
+    const scored = home ? match.homeGoals : match.awayGoals;
+    const conceded = home ? match.awayGoals : match.homeGoals;
+    const isOver = scored + conceded >= 3;
+    goalsFor += scored;
+    goalsAgainst += conceded;
+    if (isOver) over25 += 1;
+    if (last5Over25.length < 5) last5Over25.push(isOver);
+  }
+  return {
+    sample: rows.length,
+    over25,
+    under25: Math.max(0, rows.length - over25),
+    goalsFor,
+    goalsAgainst,
+    averageTotalGoals: rows.length ? round((goalsFor + goalsAgainst) / rows.length, 2) : 0,
+    last5Over25
+  };
+}
+
 function htftProfile(rows: NormalizedMatch[], team: string): HtFtProfile {
   const combinations: Record<string, number> = {};
   let sample = 0;
@@ -241,7 +279,8 @@ export function buildTeamStreakSnapshot(
     sample: rows.length,
     streaks,
     adjusted: adjustedStreaks(rows, team, streaks, leagueMatches),
-    htft: htftProfile(rows, team)
+    htft: htftProfile(rows, team),
+    goalProfile: goalProfile(rows, team)
   };
 }
 
@@ -298,7 +337,8 @@ function mergeExternalSnapshot(computed: TeamStreakSnapshot, external?: TeamStre
     sample: Math.max(external.sample, computed.sample),
     streaks: external.streaks,
     adjusted,
-    htft: external.htft.sample > 0 ? external.htft : computed.htft
+    htft: external.htft.sample > 0 ? external.htft : computed.htft,
+    goalProfile: external.goalProfile ?? computed.goalProfile
   };
 }
 

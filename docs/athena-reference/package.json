@@ -1,0 +1,20 @@
+{
+  "name": "@betynz/athena-transition-engine",
+  "version": "1.0.0-rc.1",
+  "description": "Frozen HT/FT transition engine for Betynz shadow testing.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./express": "./adapters/express-handler.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "demo": "node examples/run-example.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

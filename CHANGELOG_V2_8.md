@@ -1,31 +1,23 @@
-# Betynz v2.8.0 — Ares Streak Favorites
+# Betynz v2.8.0 — Athena Transition Engine integration
 
 ## Added
 
-- New **Ares Streak Favorite Engine**.
-- Identifies only `HOME_WIN` or `AWAY_WIN` selections where the clear favorite is priced from **1.19 up to, but not including, 1.60**.
-- Requires streak agreement rather than odds alone:
-  - favorite venue wins or unbeaten run;
-  - opponent venue losses or no-win run;
-  - a compatible directional confrontation signal;
-  - HT/FT lead-to-win support;
-  - mutual no-draw support when the favorite owns the decisive direction.
-- Requires at least two confirmations and one core favorite-versus-opponent confrontation.
-- Rejects favorite no-win/loss runs, opponent win/unbeaten contradictions, opposite directional signals, thin samples, weak historical fit, and excessive Leonidas contradiction.
-- Adds `ARES_STREAK_FAVOURITE` qualification and Ares evidence fields to published predictions.
-- Adds `streakFavorites` and `metrics.streakFavorites` to the predictions API.
-- Adds a dedicated responsive **Ares Streak Favorites** page section and explanation badge.
-- PWA cache upgraded to `betynz-shell-v2-8-0`.
+- Athena Transition Engine v1.0-RC1 as a frozen shadow engine.
+- Compatible HT/FT route matching, lead-protection, comeback, draw-lock, swing and multi-route classifications.
+- Automatic Athena runs during every prediction rebuild.
+- `NO_PICK` support and odds-conflict/home-away safeguards.
+- Automatic Athena settlement when historical results are imported.
+- Private admin endpoints for the Athena shadow dashboard and rebuilds.
+- Supabase `athena_shadow_runs` storage and `goal_profile` intelligence data.
+- BetExplorer Over/Under table discovery and parsing.
+- Athena counts on the Betynz dashboard without exposing shadow selections publicly.
 
-## Retained
+## Preserved
 
-- Zeus one-tip market competition.
-- Chronos historical-odds comparison.
-- Athena form, streak, O/U and HT/FT validation.
-- Leonidas contradiction gate.
-- The 1.19 publication minimum.
-- v2.7.1 Auto Picks fallback and automatic rebuild behavior.
+- Zeus, Chronos and Leonidas public prediction logic.
+- Existing v2.7.1 Auto Picks hotfix behaviour.
+- Current public prediction board and PWA.
 
-## Engine version
+## Deployment requirement
 
-`zeus-chronos-ares-2.8.0`
+Run `supabase/migrations/006_athena_transition_shadow.sql` before the first production rebuild.

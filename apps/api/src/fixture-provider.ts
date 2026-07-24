@@ -1,70 +1,24 @@
 import { fetchUpcomingFixtures as fetchApiFootballFixtures } from './football-api.js';
 import { betExplorerConfiguration, fetchBetExplorerFixtures, type BetExplorerSyncReport } from './betexplorer.js';
-import { enrichFixturesWithOddsApi, oddsApiConfiguration, type OddsApiEnrichmentReport } from './odds-api.js';
 import type { UpcomingFixture, UpcomingOdds } from './forecast-types.js';
 
 export type FixtureProviderMode = 'api-football' | 'betexplorer' | 'hybrid';
-export type ProviderSource = 'betexplorer' | 'api-football' | 'hybrid' | 'api-football-rescue';
-
 export type ProviderSyncReport = {
   mode: FixtureProviderMode;
-  selectedSource: ProviderSource;
   fixtures: number;
-  pricedFixtures: number;
   apiFootball: { enabled: boolean; fixtures: number; error?: string };
-  oddsApi: OddsApiEnrichmentReport;
   betExplorer: BetExplorerSyncReport;
-  rescue: {
-    enabled: boolean;
-    triggered: boolean;
-    reason?: string;
-    fixtures: number;
-    pricedFixtures: number;
-  };
   matchedAcrossProviders: number;
   unmatchedBetExplorer: number;
   unmatchedApiFootball: number;
   warnings: string[];
 };
 
-
-function oddsApiConfigured() {
-  return Boolean(process.env.ODDS_API_KEY?.trim()
-    || process.env.THE_ODDS_API_KEY?.trim()
-    || process.env.THE_ODDS_API_API_KEY?.trim());
-}
-
-const emptyOddsReport = (): OddsApiEnrichmentReport => ({
-  enabled: oddsApiConfigured(),
-  requestedSports: 0,
-  events: 0,
-  matchedFixtures: 0,
-  fixturesNeeding1X2: 0,
-  fixturesWith1X2Before: 0,
-  fixturesWith1X2After: 0,
-  warnings: []
-});
-
-const emptyBetExplorerReport = (enabled = false): BetExplorerSyncReport => ({
-  provider: 'betexplorer',
-  enabled,
-  requestedPages: 0,
-  parsedFixtures: 0,
-  fixturesWith1X2: 0,
-  pages: [],
-  warnings: []
-});
-
 let lastReport: ProviderSyncReport | null = null;
-let lastRescueReport: ProviderSyncReport | null = null;
 
 function mode(): FixtureProviderMode {
   const value = String(process.env.FIXTURE_PROVIDER || 'betexplorer').toLowerCase();
   return value === 'betexplorer' || value === 'api-football' ? value : 'hybrid';
-}
-
-function rescueEnabled() {
-  return !['0', 'false', 'no', 'off'].includes(String(process.env.AUTO_PROVIDER_RESCUE ?? 'true').toLowerCase());
 }
 
 function aliases() {
@@ -119,12 +73,12 @@ function sameFixture(a: UpcomingFixture, b: UpcomingFixture, map: Map<string, st
 }
 
 function mergeOdds(apiOdds: UpcomingOdds, betExplorerOdds: UpcomingOdds) {
-  // BetExplorer remains authoritative for its rendered 1X2 values.
-  // API-Football and The Odds API fill markets missing from the BetExplorer row.
+  // BetExplorer is authoritative for the 1X2 values it exposes on its fixture listing.
+  // API-Football remains the source for extended markets not present there.
   return { ...apiOdds, ...betExplorerOdds };
 }
 
-export function mergeProviderFixtures(apiFixtures: UpcomingFixture[], betFixtures: UpcomingFixture[]) {
+function mergeFixtures(apiFixtures: UpcomingFixture[], betFixtures: UpcomingFixture[]) {
   const aliasMap = aliases();
   const usedApi = new Set<number>();
   const output: UpcomingFixture[] = [];
@@ -151,23 +105,9 @@ export function mergeProviderFixtures(apiFixtures: UpcomingFixture[], betFixture
       matched += 1;
       output.push({
         ...apiFixture,
-        // Preserve the BetExplorer identity when that row is already stored. This lets
-        // rescue odds update the existing fixture instead of creating a duplicate match.
-        id: betFixture.id,
-        providerFixtureId: betFixture.providerFixtureId,
-        leagueId: betFixture.leagueId,
-        leagueCode: betFixture.leagueCode,
-        leagueName: betFixture.leagueName,
-        country: betFixture.country || apiFixture.country,
-        season: betFixture.season || apiFixture.season,
-        kickoff: betFixture.kickoff,
-        date: betFixture.date,
-        venue: betFixture.venue || apiFixture.venue,
-        homeTeam: betFixture.homeTeam,
-        awayTeam: betFixture.awayTeam,
         provider: 'hybrid',
         providerUrl: betFixture.providerUrl,
-        oddsSource: `${betFixture.oddsSource || 'betexplorer'}+${apiFixture.oddsSource || 'api-football'}`,
+        oddsSource: 'betexplorer+api-football',
         dataQuality: Math.min(100, Math.max(apiFixture.dataQuality || 70, betFixture.dataQuality || 60) + 8),
         odds: mergeOdds(apiFixture.odds, betFixture.odds),
         rawOdds: {
@@ -205,126 +145,71 @@ function filterFixtures(fixtures: UpcomingFixture[]) {
   });
 }
 
-function pricedCount(fixtures: UpcomingFixture[]) {
-  return fixtures.filter((fixture) => Boolean(fixture.odds.home && fixture.odds.draw && fixture.odds.away)).length;
-}
-
-async function loadApiFixtures(from: string, to: string) {
-  let fixtures: UpcomingFixture[] = [];
-  let error: string | undefined;
-  let oddsApi = emptyOddsReport();
-  if (!process.env.API_FOOTBALL_KEY?.trim()) {
-    return { fixtures, error: 'API_FOOTBALL_KEY is not configured.', oddsApi };
-  }
-  try {
-    fixtures = (await fetchApiFootballFixtures(from, to)).map((fixture) => ({
-      ...fixture,
-      provider: 'api-football',
-      oddsSource: 'api-football',
-      dataQuality: Object.keys(fixture.odds).length >= 5 ? 85 : Object.keys(fixture.odds).length >= 3 ? 72 : 58
-    }));
-    const enriched = await enrichFixturesWithOddsApi(fixtures, from, to);
-    fixtures = enriched.fixtures;
-    oddsApi = enriched.report;
-  } catch (caught) {
-    error = caught instanceof Error ? caught.message : String(caught);
-  }
-  return { fixtures, error, oddsApi };
-}
-
-export async function fetchRescueUpcomingFixtures(from: string, to: string) {
-  const api = await loadApiFixtures(from, to);
-  const fixtures = filterFixtures(api.fixtures).sort((a, b) => a.kickoff.localeCompare(b.kickoff));
-  const warnings = [...api.oddsApi.warnings];
-  if (api.error) warnings.push(api.error);
-  if (!fixtures.length) warnings.push('Provider rescue found no API-Football fixtures. Existing database fixtures should be retained.');
-  if (fixtures.length && !pricedCount(fixtures)) warnings.push('Provider rescue found fixtures, but none have complete Home/Draw/Away odds.');
-
-  const report: ProviderSyncReport = {
-    mode: mode(),
-    selectedSource: 'api-football-rescue',
-    fixtures: fixtures.length,
-    pricedFixtures: pricedCount(fixtures),
-    apiFootball: { enabled: Boolean(process.env.API_FOOTBALL_KEY?.trim()), fixtures: fixtures.length, error: api.error },
-    oddsApi: api.oddsApi,
-    betExplorer: emptyBetExplorerReport(false),
-    rescue: {
-      enabled: rescueEnabled(),
-      triggered: true,
-      reason: 'Forced provider rescue requested.',
-      fixtures: fixtures.length,
-      pricedFixtures: pricedCount(fixtures)
-    },
-    matchedAcrossProviders: 0,
-    unmatchedBetExplorer: 0,
-    unmatchedApiFootball: fixtures.length,
-    warnings
-  };
-  lastRescueReport = report;
-  lastReport = report;
-  return { fixtures, report };
-}
-
 export async function fetchMultiLeagueUpcomingFixtures(from: string, to: string) {
   const selectedMode = mode();
-  const shouldUseBetExplorer = selectedMode === 'betexplorer' || selectedMode === 'hybrid';
-  const betExplorerResult = shouldUseBetExplorer
+  let apiFixtures: UpcomingFixture[] = [];
+  let apiError: string | undefined;
+  let betExplorerResult = selectedMode === 'betexplorer' || selectedMode === 'hybrid'
     ? await fetchBetExplorerFixtures(from, to)
-    : { fixtures: [] as UpcomingFixture[], report: emptyBetExplorerReport(false) };
+    : {
+        fixtures: [] as UpcomingFixture[],
+        report: {
+          provider: 'betexplorer' as const,
+          enabled: false,
+          requestedPages: 0,
+          parsedFixtures: 0,
+          fixturesWith1X2: 0,
+          pages: [],
+          warnings: []
+        }
+      };
 
-  let api = selectedMode === 'api-football' || selectedMode === 'hybrid'
-    ? await loadApiFixtures(from, to)
-    : { fixtures: [] as UpcomingFixture[], error: undefined as string | undefined, oddsApi: emptyOddsReport() };
-
-  let rescueTriggered = false;
-  let rescueReason: string | undefined;
-  const betPriced = pricedCount(betExplorerResult.fixtures);
-  if (selectedMode === 'betexplorer' && rescueEnabled() && (!betExplorerResult.fixtures.length || betPriced === 0)) {
-    rescueTriggered = true;
-    rescueReason = !betExplorerResult.fixtures.length
-      ? 'BetExplorer returned zero fixtures.'
-      : 'BetExplorer returned fixtures without complete 1X2 odds.';
-    api = await loadApiFixtures(from, to);
+  if (selectedMode === 'api-football' || selectedMode === 'hybrid') {
+    if (process.env.API_FOOTBALL_KEY?.trim()) {
+      try {
+        apiFixtures = (await fetchApiFootballFixtures(from, to)).map((fixture) => ({
+          ...fixture,
+          provider: 'api-football',
+          oddsSource: 'api-football',
+          dataQuality: Object.keys(fixture.odds).length >= 5 ? 85 : Object.keys(fixture.odds).length >= 3 ? 72 : 58
+        }));
+      } catch (error) {
+        apiError = error instanceof Error ? error.message : String(error);
+      }
+    } else {
+      apiError = 'API_FOOTBALL_KEY is not configured.';
+    }
   }
 
-  let merged: ReturnType<typeof mergeProviderFixtures>;
-  let selectedSource: ProviderSource;
   if (selectedMode === 'api-football') {
-    merged = { fixtures: api.fixtures, matched: 0, unmatchedBetExplorer: 0, unmatchedApiFootball: api.fixtures.length };
-    selectedSource = 'api-football';
-  } else if (selectedMode === 'hybrid') {
-    merged = mergeProviderFixtures(api.fixtures, betExplorerResult.fixtures);
-    selectedSource = betExplorerResult.fixtures.length && api.fixtures.length ? 'hybrid' : betExplorerResult.fixtures.length ? 'betexplorer' : 'api-football-rescue';
-  } else if (rescueTriggered) {
-    merged = mergeProviderFixtures(api.fixtures, betExplorerResult.fixtures);
-    selectedSource = betExplorerResult.fixtures.length ? 'hybrid' : 'api-football-rescue';
-  } else {
-    merged = { fixtures: betExplorerResult.fixtures, matched: 0, unmatchedBetExplorer: betExplorerResult.fixtures.length, unmatchedApiFootball: 0 };
-    selectedSource = 'betexplorer';
+    betExplorerResult = { ...betExplorerResult, fixtures: [] };
+  }
+  if (selectedMode === 'betexplorer') {
+    apiFixtures = [];
+    apiError = undefined;
   }
 
-  const fixtures = filterFixtures(merged.fixtures).sort((a, b) => a.kickoff.localeCompare(b.kickoff));
-  const warnings = [...betExplorerResult.report.warnings, ...api.oddsApi.warnings];
-  if (api.error) warnings.push(api.error);
-  if (rescueReason) warnings.push(`Automatic rescue activated: ${rescueReason}`);
+  const merged = selectedMode === 'hybrid'
+    ? mergeFixtures(apiFixtures, betExplorerResult.fixtures)
+    : {
+        fixtures: selectedMode === 'betexplorer' ? betExplorerResult.fixtures : apiFixtures,
+        matched: 0,
+        unmatchedBetExplorer: selectedMode === 'betexplorer' ? betExplorerResult.fixtures.length : 0,
+        unmatchedApiFootball: selectedMode === 'api-football' ? apiFixtures.length : 0
+      };
+
+  const fixtures = filterFixtures(merged.fixtures)
+    .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+  const warnings = [...betExplorerResult.report.warnings];
+  if (apiError) warnings.push(apiError);
   if (selectedMode === 'hybrid' && !betExplorerResult.fixtures.length) warnings.push('Hybrid mode continued with API-Football because BetExplorer returned no usable fixtures.');
-  if (selectedMode === 'hybrid' && !api.fixtures.length) warnings.push('Hybrid mode continued with BetExplorer-only fixtures because API-Football returned no usable fixtures.');
+  if (selectedMode === 'hybrid' && !apiFixtures.length) warnings.push('Hybrid mode continued with BetExplorer-only fixtures because API-Football returned no usable fixtures.');
 
   lastReport = {
     mode: selectedMode,
-    selectedSource,
     fixtures: fixtures.length,
-    pricedFixtures: pricedCount(fixtures),
-    apiFootball: { enabled: Boolean(process.env.API_FOOTBALL_KEY?.trim()) && (selectedMode !== 'betexplorer' || rescueTriggered), fixtures: api.fixtures.length, error: api.error },
-    oddsApi: api.oddsApi,
+    apiFootball: { enabled: selectedMode !== 'betexplorer', fixtures: apiFixtures.length, error: apiError },
     betExplorer: betExplorerResult.report,
-    rescue: {
-      enabled: rescueEnabled(),
-      triggered: rescueTriggered,
-      reason: rescueReason,
-      fixtures: rescueTriggered ? api.fixtures.length : 0,
-      pricedFixtures: rescueTriggered ? pricedCount(api.fixtures) : 0
-    },
     matchedAcrossProviders: merged.matched,
     unmatchedBetExplorer: merged.unmatchedBetExplorer,
     unmatchedApiFootball: merged.unmatchedApiFootball,
@@ -332,7 +217,7 @@ export async function fetchMultiLeagueUpcomingFixtures(from: string, to: string)
   };
 
   if (!fixtures.length) {
-    throw new Error(`No fresh upcoming fixtures were returned. API-Football: ${api.error || '0 fixtures'}. BetExplorer: ${betExplorerResult.report.parsedFixtures} parsed. Existing database fixtures were not deleted.`);
+    throw new Error(`No upcoming fixtures were returned. API-Football: ${apiError || '0 fixtures'}. BetExplorer: ${betExplorerResult.report.parsedFixtures} parsed. Check /api/v1/providers/status for the retained diagnostics.`);
   }
 
   return { fixtures, report: lastReport };
@@ -341,16 +226,12 @@ export async function fetchMultiLeagueUpcomingFixtures(from: string, to: string)
 export function providerConfiguration() {
   return {
     mode: mode(),
-    automaticRescue: rescueEnabled(),
     leagueMode: process.env.API_FOOTBALL_LEAGUE_IDS?.trim() ? 'selected' : 'all',
     apiFootball: {
-      configured: Boolean(process.env.API_FOOTBALL_KEY?.trim()),
-      enabled: Boolean(process.env.API_FOOTBALL_KEY?.trim()),
+      enabled: Boolean(process.env.API_FOOTBALL_KEY?.trim()) && mode() !== 'betexplorer',
       selectedLeagueIds: (process.env.API_FOOTBALL_LEAGUE_IDS || '').split(',').map((value: string) => value.trim()).filter(Boolean)
     },
-    oddsApi: oddsApiConfiguration(),
     betExplorer: betExplorerConfiguration(),
-    lastReport,
-    lastRescueReport
+    lastReport
   };
 }

@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://betynz.com/schemas/athena-fixture-input.schema.json",
+  "title": "Athena Transition Engine Fixture Input",
+  "type": "object",
+  "required": ["home", "away"],
+  "properties": {
+    "id": { "type": ["string", "number", "null"] },
+    "league": { "type": ["string", "null"] },
+    "kickoff": { "type": ["string", "null"] },
+    "odds": {
+      "type": "object",
+      "properties": {
+        "home": { "type": "number", "minimum": 1 },
+        "draw": { "type": "number", "minimum": 1 },
+        "away": { "type": "number", "minimum": 1 }
+      },
+      "additionalProperties": true
+    },
+    "home": { "$ref": "#/$defs/team" },
+    "away": { "$ref": "#/$defs/team" }
+  },
+  "$defs": {
+    "htft": {
+      "type": "object",
+      "required": ["ww", "wd", "wl", "dw", "dd", "dl", "lw", "ld", "ll"],
+      "properties": {
+        "ww": { "type": "number", "minimum": 0 },
+        "wd": { "type": "number", "minimum": 0 },
+        "wl": { "type": "number", "minimum": 0 },
+        "dw": { "type": "number", "minimum": 0 },
+        "dd": { "type": "number", "minimum": 0 },
+        "dl": { "type": "number", "minimum": 0 },
+        "lw": { "type": "number", "minimum": 0 },
+        "ld": { "type": "number", "minimum": 0 },
+        "ll": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "goals": {
+      "type": "object",
+      "properties": {
+        "over25": { "type": "number", "minimum": 0 },
+        "under25": { "type": "number", "minimum": 0 },
+        "averageTotalGoals": { "type": "number", "minimum": 0 },
+        "goalsFor": { "type": "number", "minimum": 0 },
+        "goalsAgainst": { "type": "number", "minimum": 0 },
+        "last5Over25": {
+          "type": "array",
+          "items": { "type": "boolean" },
+          "maxItems": 5
+        }
+      },
+      "additionalProperties": true
+    },
+    "team": {
+      "type": "object",
+      "required": ["name", "matchesPlayed", "htft"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "matchesPlayed": { "type": "number", "minimum": 1 },
+        "htft": { "$ref": "#/$defs/htft" },
+        "goals": { "$ref": "#/$defs/goals" },
+        "venue": {
+          "type": ["object", "null"],
+          "description": "Optional home/away split data supplied by Betynz. The RC1 core preserves it for future venue weighting."
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

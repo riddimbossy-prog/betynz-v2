@@ -40,12 +40,8 @@ jobs:
           PREDICTION_DAYS: '6'
           PREDICTION_TIMEZONE: Africa/Accra
           BETEXPLORER_TEST_LEAGUE_PAGES: '2'
-          BETEXPLORER_BROWSER_TIMEOUT_MS: '65000'
-          BETEXPLORER_BROWSER_RETRIES: '2'
-          BETEXPLORER_BROWSER_BUDGET_MS: '480000'
-          BETEXPLORER_DIRECT_URL_TEMPLATES: 'https://www.betexplorer.com/football/?year={YYYY}&month={MM}&day={DD};https://www.betexplorer.com/next/soccer/?year={YYYY}&month={MM}&day={DD};https://www.betexplorer.com/?year={YYYY}&month={MM}&day={DD}'
           BETEXPLORER_BROWSER_RATE_MS: '1800'
-          BETEXPLORER_INTELLIGENCE_TAB_LIMIT: '2'
+          BETEXPLORER_INTELLIGENCE_TAB_LIMIT: '3'
         run: node scripts/betexplorer-browser-sync.mjs
 
       - name: Upload browser diagnostics

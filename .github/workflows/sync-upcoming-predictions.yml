@@ -12,7 +12,7 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -27,25 +27,19 @@ jobs:
           npm install --no-save playwright@1.54.1
           npx playwright install --with-deps chromium
 
-      - name: Collect direct date pages, rescue providers and rebuild predictions
+      - name: Render, import and predict today plus next five days
         env:
           API_URL: ${{ secrets.BETYNZ_API_URL }}
           ADMIN_TOKEN: ${{ secrets.BETYNZ_ADMIN_IMPORT_TOKEN }}
           DRY_RUN: 'false'
           PREDICTION_DAYS: '6'
           PREDICTION_TIMEZONE: Africa/Accra
-          BETEXPLORER_BROWSER_TIMEOUT_MS: '65000'
-          BETEXPLORER_BROWSER_RETRIES: '2'
-          BETEXPLORER_BROWSER_BUDGET_MS: '600000'
-          BETEXPLORER_DIRECT_URL_TEMPLATES: 'https://www.betexplorer.com/football/?year={YYYY}&month={MM}&day={DD};https://www.betexplorer.com/next/soccer/?year={YYYY}&month={MM}&day={DD};https://www.betexplorer.com/?year={YYYY}&month={MM}&day={DD}'
-          BETEXPLORER_BROWSER_LANDING_URLS: 'https://www.betexplorer.com/football/;https://www.betexplorer.com/next/soccer/'
           BETEXPLORER_LEAGUE_PAGE_LIMIT: '120'
-          BETEXPLORER_BROWSER_RATE_MS: '1800'
-          BETEXPLORER_NO_NEW_STOP: '24'
-          BETEXPLORER_MIN_LEAGUE_PAGES: '40'
-          BETEXPLORER_BROWSER_JITTER_MS: '500'
-          BETEXPLORER_INTELLIGENCE_TAB_LIMIT: '2'
-          BETEXPLORER_FAILURE_DIAGNOSTICS: 'true'
+          BETEXPLORER_BROWSER_RATE_MS: '2200'
+          BETEXPLORER_NO_NEW_STOP: '30'
+          BETEXPLORER_MIN_LEAGUE_PAGES: '60'
+          BETEXPLORER_BROWSER_JITTER_MS: '700'
+          BETEXPLORER_INTELLIGENCE_TAB_LIMIT: '3'
         run: node scripts/betexplorer-browser-sync.mjs
 
       - name: Upload sync diagnostics
@@ -53,7 +47,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: betexplorer-browser-sync-report
-          path: |
-            betexplorer-browser-report.json
-            betexplorer-browser-diagnostics/
+          path: betexplorer-browser-report.json
           if-no-files-found: warn
