@@ -57,6 +57,8 @@ services:
         value: 6
       - key: API_FOOTBALL_HISTORY_MIN_LEAGUE_MATCHES
         value: 40
+      - key: API_FOOTBALL_HISTORY_PREVIOUS_SEASON_ENABLED
+        value: true
       - key: FIXTURE_PROVIDER
         value: api-football
       - key: BETEXPLORER_ENABLED

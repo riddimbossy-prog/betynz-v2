@@ -87,6 +87,8 @@ function compactResult(value: Awaited<ReturnType<typeof syncUpcomingPredictions>
     historyLeaguesConsidered: value.historyBootstrap.consideredLeagues,
     historyLeaguesRequested: value.historyBootstrap.requestedLeagues,
     historyMatchesFetched: value.historyBootstrap.matchesFetched,
+    historyCoverage: value.historyCoverage,
+    historyLeagueDetails: value.historyBootstrap.leagues,
     historyWarnings: value.historyBootstrap.warnings,
     warnings: value.providers.warnings
   };

@@ -1,7 +1,7 @@
 {
   "name": "@betynz/api",
   "private": true,
-  "version": "3.0.2",
+  "version": "3.0.3",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -14,7 +14,8 @@
     "test:athena": "tsx src/athena-smoke.ts",
     "test:odds-api": "tsx src/odds-api-smoke.ts",
     "test:olympian": "tsx src/olympian-smoke.ts",
-    "test:history-bootstrap": "tsx src/history-bootstrap-smoke.ts"
+    "test:history-bootstrap": "tsx src/history-bootstrap-smoke.ts",
+    "test:chronos-fallback": "tsx src/chronos-fallback-smoke.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",

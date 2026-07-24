@@ -31,7 +31,7 @@ const GOD_META: Record<GodKey, { label: string; mark: string }> = {
 const emptyPredictions: PredictionDashboard = {
   source: 'offline',
   generatedAt: new Date().toISOString(),
-  engineVersion: 'olympian-roles-3.0.2',
+  engineVersion: 'olympian-roles-3.0.3',
   currentEngineReady: false,
   rebuilding: false,
   window: { from: '', to: '', days: [] },
@@ -136,7 +136,13 @@ export default function App() {
       ...(incoming.aresPicks || [])
     ];
     const firstDateWithPicks = incoming.window.days.find((date) => incomingAll.some((pick) => pick.date === date));
-    setSelectedDate((current) => current && incoming.window.days.includes(current) ? current : firstDateWithPicks || incoming.window.days[0] || '');
+    setSelectedDate((current) => {
+      const currentStillHasPicks = current
+        && incoming.window.days.includes(current)
+        && incomingAll.some((pick) => pick.date === current);
+      if (currentStillHasPicks) return current;
+      return firstDateWithPicks || (current && incoming.window.days.includes(current) ? current : incoming.window.days[0] || '');
+    });
     setLoadError('');
   };
 
@@ -207,7 +213,7 @@ export default function App() {
       <main id="top">
         <section className="hero compact-hero">
           <div className="hero-copy">
-            <span className="eyebrow"><Sparkles size={14} /> OLYMPIAN PICKS 3.0.2</span>
+            <span className="eyebrow"><Sparkles size={14} /> OLYMPIAN PICKS 3.0.3</span>
             <h1>Only qualified picks.<br /><span>Nothing forced.</span></h1>
             <p>Chronos, Athena and Ares publish their picks. Zeus posts only approved bankers below 1.60 odds.</p>
             <div className="trust-row">
@@ -256,7 +262,7 @@ export default function App() {
           ) : loadError ? (
             <div className="empty-panel compact"><Activity /><div><h3>{loadError}</h3></div></div>
           ) : availableGods.length === 0 || visiblePicks.length === 0 ? (
-            <div className="empty-panel compact clean-empty"><ShieldCheck /><div><h3>No picks for today.</h3></div></div>
+            <div className="empty-panel compact clean-empty"><ShieldCheck /><div><h3>No qualified picks for this date.</h3><p>{data.metrics.fixtures} fixtures scanned · {data.metrics.pricedFixtures} with complete 1X2 odds.</p></div></div>
           ) : (
             <div className="god-pick-grid">{visiblePicks.map((pick) => <PickCard key={pick.id} pick={pick} />)}</div>
           )}

@@ -1,85 +1,40 @@
-# Betynz v3.0.2 — Historical Bootstrap Hotfix
+# Betynz v3.0.3 — Olympian Data Qualification Hotfix
 
-This hotfix keeps the automatic Olympian pipeline and adds the historical data layer required for Athena and Ares to qualify real picks after deployment.
+This release fixes the zero-pick condition that remained in v3.0.2.
 
-## Official engine flow
+## Root cause fixed
 
-1. **API-Football** supplies the six-day fixture board, available odds, and a bounded historical results/HT-FT bootstrap for leagues that do not yet have enough Supabase history.
-2. The **premium Odds API** activates as fallback when API-Football has insufficient 1X2 or O/U 2.5 coverage, or returns no fixtures.
-3. **Chronos**, **Athena**, and **Ares** independently build qualified picks.
-4. Their public picks are written to Supabase `god_picks`.
-5. **Zeus** aggregates banker-grade inputs, rejects conflicts, and publishes only picks with a valid decimal price strictly greater than `1.00` and strictly below `1.60`.
+API-Football historical fixture responses provide results and half-time scores but do not provide historical bookmaker prices. The standalone Chronos service required at least 60 historical matches carrying usable odds, so it rejected every API-Football-only history set.
 
-## Automatic rebuilds
+The history bootstrap also queried only the fixture's current season. At the beginning of a new season, that season can contain upcoming fixtures but almost no completed matches, leaving Athena and Ares under-sampled.
 
-The API process now uses a single-flight pipeline runner. Overlapping rebuilds join the active run instead of spending provider quota twice.
+## v3.0.3 behaviour
 
-- Startup rebuild: enabled by default.
-- Daily rebuild: `03:15` in `PREDICTION_TIMEZONE` by default.
-- Public Refresh: `POST /api/v1/predictions/refresh` performs a real provider sync and rebuild.
-- Public Refresh cooldown: five minutes by default.
-- Admin sync: `POST /api/v1/admin/sync-upcoming` uses the same controlled pipeline.
+- API-Football remains the primary upcoming-fixture provider.
+- Premium Odds API remains the automatic coverage fallback.
+- Historical hydration queries the current season first.
+- If the current season is below the safe history floor, the preceding season is fetched and merged automatically.
+- Chronos keeps its historical-odds pattern mode as the primary path.
+- When historical odds are genuinely unavailable, Chronos can use a conservative results-and-form path based on:
+  - current market direction;
+  - same-league result frequencies;
+  - recent home/away team form;
+  - minimum league and team samples.
+- Chronos fallback picks are not automatically bankers.
+- Athena remains the frozen HT/FT transition engine.
+- Ares remains the streak and matchup-value engine.
+- Zeus still accepts banker-grade inputs only and still rejects odds equal to or above 1.60.
+- Chronos, Athena, Ares and Zeus publish through `god_picks`.
+- Empty gods remain hidden for the selected day.
+- After Refresh, the board automatically opens the first day that actually has picks.
+- When no pick qualifies, the empty state reports how many fixtures were scanned and how many had complete 1X2 odds.
 
-```text
-PIPELINE_STARTUP_REBUILD_ENABLED=true
-PIPELINE_DAILY_REBUILD_ENABLED=true
-PIPELINE_DAILY_HOUR=3
-PIPELINE_DAILY_MINUTE=15
-PIPELINE_PUBLIC_REFRESH_COOLDOWN_MS=300000
-```
+## Deploy
 
-
-## Historical bootstrap
-
-Before the gods rebuild, the pipeline checks upcoming teams against Supabase history. Leagues with insufficient team samples are hydrated from completed API-Football fixtures. This supplies results, full-time scores, and half-time scores without lowering any engine threshold.
-
-```text
-API_FOOTBALL_HISTORY_ENABLED=true
-API_FOOTBALL_HISTORY_DAYS=365
-API_FOOTBALL_HISTORY_MAX_LEAGUES=18
-API_FOOTBALL_HISTORY_CONCURRENCY=3
-API_FOOTBALL_HISTORY_MIN_TEAM_MATCHES=6
-API_FOOTBALL_HISTORY_MIN_LEAGUE_MATCHES=40
-```
-
-The import is idempotent and skips leagues once enough history exists, protecting API quota on later startup, daily, and manual rebuilds. Chronos still requires historical odds-pattern evidence; the bootstrap does not fabricate old prices.
-
-## Private diagnostics
-
-`GET /api/v1/admin/pipeline-diagnostics`
-
-Send the existing admin token in the `x-admin-token` header. The response is private/no-store and includes:
-
-- active and recent rebuild runs;
-- trigger, status, duration, and safe error message;
-- API-Football fixture and coverage counts;
-- Odds API fallback trigger reasons and usage;
-- Chronos, Athena, Ares, Zeus, and total `god_picks` publication counts;
-- schedule configuration;
-- historical leagues requested, matches fetched/imported, and safe bootstrap warnings.
-
-No API keys or Supabase credentials are returned.
-
-## Public board behavior
-
-- God tabs are calculated for the selected date.
-- A god with zero picks on that date is hidden.
-- Zeus picks are guarded again in the frontend with the strict `< 1.60` rule.
-- The PWA cache key is bumped to `betynz-shell-v3-0-2` so installed apps receive the hotfix.
-- A failed Refresh now returns an actual pipeline failure instead of silently presenting an empty board.
-
-## Required Supabase migrations
-
-Run these in numerical order:
-
-```text
-supabase/migrations/007_olympian_roles.sql
-supabase/migrations/008_pipeline_hotfix.sql
-```
-
-Migration `007` creates `god_picks`. Migration `008` allows unmatched premium Odds API fallback fixtures to be stored with provider `odds-api`.
-
-## Required Render secrets
+1. Replace the current repository contents with this release.
+2. Commit and push through GitHub Desktop.
+3. Let the Render API and web services redeploy.
+4. Confirm the Render secrets still contain:
 
 ```text
 SUPABASE_URL
@@ -89,15 +44,35 @@ API_FOOTBALL_KEY
 ODDS_API_KEY
 ```
 
-The included `deploy/render.yaml` sets API-Football as primary, enables the premium Odds API fallback, and enables startup/daily rebuilding.
-
-## Validation
+5. Confirm these Render values are present:
 
 ```text
-npm run test:v3
-npm run test:olympian
-npm run test:history-bootstrap
-npm run build
+API_FOOTBALL_HISTORY_ENABLED=true
+API_FOOTBALL_HISTORY_PREVIOUS_SEASON_ENABLED=true
+CHRONOS_ENGINE_ENABLED=true
+ATHENA_ENGINE_ENABLED=true
+ARES_ENGINE_ENABLED=true
+ZEUS_ENGINE_ENABLED=true
 ```
 
-The package also includes `TEST_REPORT_V3_0_2.md` with the checks completed in the build environment.
+6. Press **Refresh** once after deployment. The first rebuild may take longer because the preceding season can be imported.
+
+## Database
+
+No new migration is required for v3.0.3. The following existing migrations must already be installed:
+
+```text
+supabase/migrations/007_olympian_roles.sql
+supabase/migrations/008_pipeline_hotfix.sql
+```
+
+## Private diagnostics
+
+Use the existing private endpoint with the admin token:
+
+```http
+GET /api/v1/admin/pipeline-diagnostics
+x-admin-token: <ADMIN_IMPORT_TOKEN>
+```
+
+The latest run now includes historical coverage totals and per-league current/previous-season fetch counts.

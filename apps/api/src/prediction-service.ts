@@ -77,6 +77,19 @@ export async function rebuildPredictions(from?: string, to?: string) {
     listStreakSnapshots(snapshotFrom, end)
   ]);
 
+  const historicalMatchesWithHtFt = historicalMatches.filter((match) =>
+    typeof match.halfTimeHomeGoals === 'number' && typeof match.halfTimeAwayGoals === 'number'
+  ).length;
+  const historicalMatchesWith1X2Odds = historicalMatches.filter((match) => Boolean(
+    (match.odds.openingHome ?? match.odds.closingHome)
+    && (match.odds.openingDraw ?? match.odds.closingDraw)
+    && (match.odds.openingAway ?? match.odds.closingAway)
+  )).length;
+  const historicalMatchesWithTotalsOdds = historicalMatches.filter((match) => Boolean(
+    (match.odds.openingOver25 ?? match.odds.closingOver25)
+    && (match.odds.openingUnder25 ?? match.odds.closingUnder25)
+  )).length;
+
   const battles = fixtures.map((fixture) => analyzeFixtureBattle(fixture, historicalMatches, externalStreakSnapshots));
   const predictions = battles.flatMap((battle) => battle.prediction ? [battle.prediction] : []);
   const rejections = battles.flatMap((battle) => battle.rejection ? [battle.rejection] : []);
@@ -127,6 +140,12 @@ export async function rebuildPredictions(from?: string, to?: string) {
     streakSnapshots: snapshots.length,
     confrontationRecords: confrontations.length,
     externalStreakSnapshots: externalStreakSnapshots.length,
+    historyCoverage: {
+      matches: historicalMatches.length,
+      withHtFt: historicalMatchesWithHtFt,
+      with1X2Odds: historicalMatchesWith1X2Odds,
+      withTotalsOdds: historicalMatchesWithTotalsOdds
+    },
     chronosPicks: chronosPicks.length,
     athenaRuns: athenaRuns.length,
     athenaPicks: athenaPicks.length,

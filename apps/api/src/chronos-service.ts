@@ -3,9 +3,10 @@ import { OLYMPIAN_ENGINE_VERSION } from './olympian-version.js';
 import { sameLeague, teamKey } from './identity.js';
 import type { NormalizedMatch } from './types.js';
 
-export const CHRONOS_ENGINE_VERSION = 'chronos-historical-pattern-1.0.0';
+export const CHRONOS_ENGINE_VERSION = 'chronos-historical-pattern-1.1.0';
 
 type ChronosMarket = 'HOME_WIN' | 'AWAY_WIN' | 'OVER_25' | 'UNDER_25';
+type ChronosMode = 'odds-pattern' | 'results-form';
 
 type Candidate = {
   marketKey: ChronosMarket;
@@ -15,6 +16,9 @@ type Candidate = {
   similarity: number;
   teamRate: number;
   score: number;
+  mode: ChronosMode;
+  homeSample: number;
+  awaySample: number;
 };
 
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value));
@@ -111,9 +115,16 @@ function recentRows(matches: NormalizedMatch[], team: string, venue: 'home' | 'a
     .slice(0, limit);
 }
 
+function teamSamples(matches: NormalizedMatch[], fixture: UpcomingFixture) {
+  return {
+    homeSample: recentRows(matches, fixture.homeTeam, 'home', 12).length,
+    awaySample: recentRows(matches, fixture.awayTeam, 'away', 12).length
+  };
+}
+
 function teamAlignment(matches: NormalizedMatch[], fixture: UpcomingFixture, market: ChronosMarket) {
-  const homeRows = recentRows(matches, fixture.homeTeam, 'home');
-  const awayRows = recentRows(matches, fixture.awayTeam, 'away');
+  const homeRows = recentRows(matches, fixture.homeTeam, 'home', 12);
+  const awayRows = recentRows(matches, fixture.awayTeam, 'away', 12);
   if (homeRows.length < 4 || awayRows.length < 4) return 0.5;
   if (market === 'HOME_WIN') {
     const homeWins = homeRows.filter((match) => resultForTeam(match, fixture.homeTeam) === 'W').length / homeRows.length;
@@ -132,7 +143,7 @@ function teamAlignment(matches: NormalizedMatch[], fixture: UpcomingFixture, mar
   return (rate(homeRows) + rate(awayRows)) / 2;
 }
 
-function evaluate(fixture: UpcomingFixture, matches: NormalizedMatch[], market: ChronosMarket): Candidate | null {
+function evaluateOddsPattern(fixture: UpcomingFixture, matches: NormalizedMatch[], market: ChronosMarket): Candidate | null {
   const odds = currentOdd(fixture, market);
   const target = targetShape(fixture, market);
   if (!odds || target == null || odds > 3.60) return null;
@@ -158,7 +169,53 @@ function evaluate(fixture: UpcomingFixture, matches: NormalizedMatch[], market: 
   const teamRate = teamAlignment(prior, fixture, market);
   const score = hitRate * 55 + teamRate * 25 + similarity * 20;
   if (hitRate < 0.54 || similarity < 0.28 || score < 64) return null;
-  return { marketKey: market, odds, hitRate, sample: rows.length, similarity, teamRate, score };
+  const samples = teamSamples(prior, fixture);
+  return { marketKey: market, odds, hitRate, sample: rows.length, similarity, teamRate, score, mode: 'odds-pattern', ...samples };
+}
+
+/**
+ * API-Football historical fixtures do not include bookmaker odds. This
+ * conservative fallback lets Chronos still evaluate result patterns, current
+ * market direction and recent home/away form without pretending historical
+ * odds exist. The stricter banker test below keeps Zeus protected.
+ */
+function evaluateResultsForm(fixture: UpcomingFixture, matches: NormalizedMatch[], market: ChronosMarket): Candidate | null {
+  const odds = currentOdd(fixture, market);
+  const implied = targetShape(fixture, market);
+  if (!odds || implied == null || odds > 3.20) return null;
+
+  const prior = matches.filter((match) => match.date < fixture.date);
+  const leagueRows = prior
+    .filter((match) => sameLeague(match.leagueName, fixture.leagueName))
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 180);
+  if (leagueRows.length < 24) return null;
+
+  const { homeSample, awaySample } = teamSamples(prior, fixture);
+  if (homeSample < 4 || awaySample < 4) return null;
+
+  const hitRate = leagueRows.filter((match) => landed(match, market)).length / leagueRows.length;
+  const teamRate = teamAlignment(prior, fixture, market);
+  const agreement = clamp(1 - Math.abs(teamRate - hitRate));
+  const score = teamRate * 55 + hitRate * 25 + implied * 15 + agreement * 5;
+
+  const directional = market === 'HOME_WIN' || market === 'AWAY_WIN';
+  const minimumTeamRate = directional ? 0.55 : 0.57;
+  const minimumLeagueRate = directional ? 0.38 : 0.46;
+  if (teamRate < minimumTeamRate || hitRate < minimumLeagueRate || score < 63) return null;
+
+  return {
+    marketKey: market,
+    odds,
+    hitRate,
+    sample: leagueRows.length,
+    similarity: agreement,
+    teamRate,
+    score,
+    mode: 'results-form',
+    homeSample,
+    awaySample
+  };
 }
 
 function selection(fixture: UpcomingFixture, market: ChronosMarket) {
@@ -168,18 +225,40 @@ function selection(fixture: UpcomingFixture, market: ChronosMarket) {
   return 'Under 2.5 goals';
 }
 
+function bankerCandidate(candidate: Candidate) {
+  if (candidate.mode === 'odds-pattern') {
+    return candidate.score >= 77
+      && candidate.hitRate >= 0.59
+      && candidate.teamRate >= 0.54
+      && candidate.similarity >= 0.50
+      && candidate.sample >= 80;
+  }
+  return candidate.score >= 76
+    && candidate.hitRate >= 0.54
+    && candidate.teamRate >= 0.64
+    && candidate.similarity >= 0.86
+    && candidate.sample >= 40
+    && candidate.homeSample >= 5
+    && candidate.awaySample >= 5;
+}
+
 export function buildChronosPick(fixture: UpcomingFixture, historicalMatches: NormalizedMatch[]): GodPublicPick | null {
-  const candidates = (['HOME_WIN', 'AWAY_WIN', 'OVER_25', 'UNDER_25'] as ChronosMarket[])
-    .map((market) => evaluate(fixture, historicalMatches, market))
-    .filter((candidate): candidate is Candidate => Boolean(candidate))
+  const markets = ['HOME_WIN', 'AWAY_WIN', 'OVER_25', 'UNDER_25'] as ChronosMarket[];
+  const oddsCandidates = markets
+    .map((market) => evaluateOddsPattern(fixture, historicalMatches, market))
+    .filter((candidate): candidate is Candidate => Boolean(candidate));
+  const candidates = (oddsCandidates.length ? oddsCandidates : markets
+    .map((market) => evaluateResultsForm(fixture, historicalMatches, market))
+    .filter((candidate): candidate is Candidate => Boolean(candidate)))
     .sort((a, b) => b.score - a.score || b.hitRate - a.hitRate);
+
   const chosen = candidates[0];
   if (!chosen) return null;
-  const banker = chosen.score >= 77
-    && chosen.hitRate >= 0.59
-    && chosen.teamRate >= 0.54
-    && chosen.similarity >= 0.50
-    && chosen.sample >= 80;
+  const banker = bankerCandidate(chosen);
+  const statsLine = chosen.mode === 'odds-pattern'
+    ? `Odds history ${Math.round(chosen.hitRate * 100)}% · ${chosen.sample} matches`
+    : `Results ${Math.round(chosen.hitRate * 100)}% · Form ${Math.round(chosen.teamRate * 100)}%`;
+
   return {
     fixtureId: fixture.id,
     engineVersion: OLYMPIAN_ENGINE_VERSION,
@@ -196,7 +275,7 @@ export function buildChronosPick(fixture: UpcomingFixture, historicalMatches: No
     score: round(chosen.score),
     banker,
     odds: round(chosen.odds, 2),
-    statsLine: `History ${Math.round(chosen.hitRate * 100)}% · ${chosen.sample} matches`,
+    statsLine,
     sourceGods: ['chronos'],
     settledStatus: 'pending'
   };

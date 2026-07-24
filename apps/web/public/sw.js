@@ -1,4 +1,4 @@
-const CACHE = 'betynz-shell-v3-0-2';
+const CACHE = 'betynz-shell-v3-0-3';
 const SHELL = ['/', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {

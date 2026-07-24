@@ -239,6 +239,9 @@ export type HistoricalBootstrapReport = {
     upcomingFixtures: number;
     existingMatches: number;
     fetchedMatches: number;
+    currentSeasonFetched?: number;
+    previousSeasonFetched?: number;
+    seasonsRequested?: string[];
     error?: string;
   }>;
 };
@@ -352,7 +355,9 @@ export async function fetchHistoricalMatchesForUpcoming(
   for (const fixture of fixtures) {
     const leagueId = Number(fixture.leagueId);
     const season = String(fixture.season || '');
-    if (!leagueId || !/^\d{4}$/.test(season)) continue;
+    // Synthetic Odds API league ids cannot be sent to API-Football. They are
+    // still hydrated when the fixture was matched to an API-Football row.
+    if (!leagueId || !/^\d{4}$/.test(season) || fixture.provider === 'odds-api') continue;
     const key = `${leagueId}|${season}`;
     const group = grouped.get(key) ?? {
       leagueId,
@@ -370,15 +375,17 @@ export async function fetchHistoricalMatchesForUpcoming(
   const minTeamMatches = boundedInteger('API_FOOTBALL_HISTORY_MIN_TEAM_MATCHES', 6, 3, 20);
   const minLeagueMatches = boundedInteger('API_FOOTBALL_HISTORY_MIN_LEAGUE_MATCHES', 40, 12, 500);
   const maxLeagues = boundedInteger('API_FOOTBALL_HISTORY_MAX_LEAGUES', 18, 1, 80);
-  const historyDays = boundedInteger('API_FOOTBALL_HISTORY_DAYS', 365, 60, 730);
+  const historyDays = boundedInteger('API_FOOTBALL_HISTORY_DAYS', 540, 90, 900);
   const concurrency = boundedInteger('API_FOOTBALL_HISTORY_CONCURRENCY', 3, 1, 8);
+  const previousSeasonEnabled = booleanEnv('API_FOOTBALL_HISTORY_PREVIOUS_SEASON_ENABLED', true);
 
   const candidates = [...grouped.values()].map((group) => {
     const sameLeagueRows = existingMatches.filter((match) => {
       const sameCode = String(match.leagueCode) === String(group.leagueId);
       const sameName = compactTeam(match.leagueName) === compactTeam(group.leagueName);
-      const sameSeason = !match.season || match.season === group.season;
-      return (sameCode || sameName) && sameSeason;
+      // Do not discard previous-season history here. Athena and Ares need it
+      // at the start of a new season, and Chronos uses it as its base pattern.
+      return sameCode || sameName;
     });
     const teamCounts = new Map<string, number>();
     for (const match of sameLeagueRows) {
@@ -387,7 +394,8 @@ export async function fetchHistoricalMatchesForUpcoming(
       teamCounts.set(home, (teamCounts.get(home) || 0) + 1);
       teamCounts.set(away, (teamCounts.get(away) || 0) + 1);
     }
-    const weakestTeamSample = Math.min(...[...group.teams].map((team) => teamCounts.get(team) || 0));
+    const teamSamples = [...group.teams].map((team) => teamCounts.get(team) || 0);
+    const weakestTeamSample = teamSamples.length ? Math.min(...teamSamples) : 0;
     const needsHistory = sameLeagueRows.length < minLeagueMatches || weakestTeamSample < minTeamMatches;
     return { ...group, existingMatches: sameLeagueRows.length, weakestTeamSample, needsHistory };
   });
@@ -401,20 +409,52 @@ export async function fetchHistoricalMatchesForUpcoming(
   const to = subtractDays(nowDate, 1);
   const from = subtractDays(to, historyDays);
 
+  async function fetchLeagueSeason(leagueId: number, season: string) {
+    const payload = await apiGet(
+      `/fixtures?league=${encodeURIComponent(leagueId)}&season=${encodeURIComponent(season)}`
+      + `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&timezone=UTC`
+    );
+    return (payload?.response ?? [])
+      .map(completedMatch)
+      .filter((match: NormalizedMatch | null): match is NormalizedMatch => Boolean(match));
+  }
+
   const results = await mapWithConcurrency(selected, concurrency, async (group) => {
+    const seasonsRequested = [group.season];
     try {
-      const payload = await apiGet(
-        `/fixtures?league=${encodeURIComponent(group.leagueId)}&season=${encodeURIComponent(group.season)}`
-        + `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&timezone=UTC`
-      );
-      const matches = (payload?.response ?? [])
-        .map(completedMatch)
-        .filter((match: NormalizedMatch | null): match is NormalizedMatch => Boolean(match));
-      return { group, matches };
+      const currentMatches = await fetchLeagueSeason(group.leagueId, group.season);
+      let previousMatches: NormalizedMatch[] = [];
+      const previousSeason = String(Number(group.season) - 1);
+
+      // API-Football seasons are start years. In July/August a newly created
+      // season can contain fixtures but zero completed games, so querying only
+      // that season leaves every engine starved. Pull the preceding season
+      // whenever the current one is below the safe history floor.
+      if (previousSeasonEnabled && /^\d{4}$/.test(previousSeason) && currentMatches.length < minLeagueMatches) {
+        seasonsRequested.push(previousSeason);
+        try {
+          previousMatches = await fetchLeagueSeason(group.leagueId, previousSeason);
+        } catch (error) {
+          console.warn(`[Betynz history bootstrap] Previous season ${previousSeason} failed for ${group.leagueName}:`, error);
+        }
+      }
+
+      const unique = new Map<string, NormalizedMatch>();
+      for (const match of [...currentMatches, ...previousMatches]) unique.set(match.id, match);
+      return {
+        group,
+        matches: [...unique.values()],
+        currentSeasonFetched: currentMatches.length,
+        previousSeasonFetched: previousMatches.length,
+        seasonsRequested
+      };
     } catch (error) {
       return {
         group,
         matches: [] as NormalizedMatch[],
+        currentSeasonFetched: 0,
+        previousSeasonFetched: 0,
+        seasonsRequested,
         error: error instanceof Error ? error.message : String(error)
       };
     }
@@ -433,6 +473,9 @@ export async function fetchHistoricalMatchesForUpcoming(
       upcomingFixtures: result.group.fixtures.length,
       existingMatches: result.group.existingMatches,
       fetchedMatches: result.matches.length,
+      currentSeasonFetched: result.currentSeasonFetched,
+      previousSeasonFetched: result.previousSeasonFetched,
+      seasonsRequested: result.seasonsRequested,
       error: 'error' in result ? result.error : undefined
     });
   }
