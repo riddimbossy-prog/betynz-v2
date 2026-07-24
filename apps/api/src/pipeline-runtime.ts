@@ -82,6 +82,12 @@ function compactResult(value: Awaited<ReturnType<typeof syncUpcomingPredictions>
     oddsApiTriggerReasons: value.providers.oddsApi.triggerReasons,
     apiFootball1X2Coverage: value.providers.oddsApi.primaryCoverage,
     apiFootballExtendedCoverage: value.providers.oddsApi.extendedCoverage,
+    historicalMatchesImported: value.historicalMatchesImported,
+    historyBootstrapEnabled: value.historyBootstrap.enabled,
+    historyLeaguesConsidered: value.historyBootstrap.consideredLeagues,
+    historyLeaguesRequested: value.historyBootstrap.requestedLeagues,
+    historyMatchesFetched: value.historyBootstrap.matchesFetched,
+    historyWarnings: value.historyBootstrap.warnings,
     warnings: value.providers.warnings
   };
 }
@@ -153,6 +159,7 @@ export async function requestPipelineRebuild(trigger: PipelineTrigger, force = f
   activeRunPromise = executePipeline(trigger);
   try {
     const run = await activeRunPromise;
+    if (trigger === 'public-refresh' && run.status === 'failed') lastPublicRefreshAcceptedAt = 0;
     return { accepted: true, joined: false, coolingDown: false, retryAfterSeconds: 0, run };
   } finally {
     activeRunPromise = null;

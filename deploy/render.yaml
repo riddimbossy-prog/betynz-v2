@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: betynz-v2
+    name: betynz-api
     runtime: node
     rootDir: .
     buildCommand: npm install && npm run build -w apps/api
@@ -45,6 +45,18 @@ services:
         value: https://v3.football.api-sports.io
       - key: API_FOOTBALL_MAX_ODDS_PAGES
         value: 50
+      - key: API_FOOTBALL_HISTORY_ENABLED
+        value: true
+      - key: API_FOOTBALL_HISTORY_DAYS
+        value: 365
+      - key: API_FOOTBALL_HISTORY_MAX_LEAGUES
+        value: 18
+      - key: API_FOOTBALL_HISTORY_CONCURRENCY
+        value: 3
+      - key: API_FOOTBALL_HISTORY_MIN_TEAM_MATCHES
+        value: 6
+      - key: API_FOOTBALL_HISTORY_MIN_LEAGUE_MATCHES
+        value: 40
       - key: FIXTURE_PROVIDER
         value: api-football
       - key: BETEXPLORER_ENABLED

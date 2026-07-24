@@ -1,4 +1,5 @@
 import { fetchMultiLeagueUpcomingFixtures } from './fixture-provider.js';
+import { fetchHistoricalMatchesForUpcoming, type HistoricalBootstrapReport } from './football-api.js';
 import { buildAthenaShadowRun } from './athena-service.js';
 import { ATHENA_ENGINE_VERSION, ATHENA_MARKETS } from './athena-transition.js';
 import { buildAresPick } from './ares-service.js';
@@ -23,6 +24,7 @@ import {
   replaceRejectedBattles,
   sourceName,
   upsertConfrontationRecords,
+  upsertMatches,
   upsertPredictions,
   upsertStreakSnapshots,
   upsertUpcomingFixtures
@@ -141,8 +143,36 @@ export async function syncUpcomingPredictions() {
   const window = predictionWindow();
   const providerResult = await fetchMultiLeagueUpcomingFixtures(window.from, window.to);
   await upsertUpcomingFixtures(providerResult.fixtures);
+
+  let historyBootstrap: HistoricalBootstrapReport = {
+    enabled: String(process.env.API_FOOTBALL_HISTORY_ENABLED ?? 'true').toLowerCase() !== 'false',
+    consideredLeagues: 0,
+    requestedLeagues: 0,
+    skippedLeagues: 0,
+    matchesFetched: 0,
+    warnings: [],
+    leagues: []
+  };
+  let historicalMatchesImported = 0;
+  try {
+    const existingMatches = await allMatches();
+    const hydrated = await fetchHistoricalMatchesForUpcoming(providerResult.fixtures, existingMatches);
+    historyBootstrap = hydrated.report;
+    if (hydrated.matches.length) historicalMatchesImported = await upsertMatches(hydrated.matches, 'api-football');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    historyBootstrap = { ...historyBootstrap, warnings: [...historyBootstrap.warnings, message] };
+    console.warn('[Betynz history bootstrap] Continuing without additional history:', error);
+  }
+
   const rebuilt = await rebuildPredictions(window.from, window.to);
-  return { ...rebuilt, window, providers: providerResult.report };
+  return {
+    ...rebuilt,
+    window,
+    providers: providerResult.report,
+    historyBootstrap,
+    historicalMatchesImported
+  };
 }
 
 export async function getPredictionDashboard(from?: string, to?: string): Promise<PredictionDashboard> {

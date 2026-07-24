@@ -31,7 +31,7 @@ const GOD_META: Record<GodKey, { label: string; mark: string }> = {
 const emptyPredictions: PredictionDashboard = {
   source: 'offline',
   generatedAt: new Date().toISOString(),
-  engineVersion: 'olympian-roles-3.0.1',
+  engineVersion: 'olympian-roles-3.0.2',
   currentEngineReady: false,
   rebuilding: false,
   window: { from: '', to: '', days: [] },
@@ -207,7 +207,7 @@ export default function App() {
       <main id="top">
         <section className="hero compact-hero">
           <div className="hero-copy">
-            <span className="eyebrow"><Sparkles size={14} /> OLYMPIAN PICKS 3.0.1</span>
+            <span className="eyebrow"><Sparkles size={14} /> OLYMPIAN PICKS 3.0.2</span>
             <h1>Only qualified picks.<br /><span>Nothing forced.</span></h1>
             <p>Chronos, Athena and Ares publish their picks. Zeus posts only approved bankers below 1.60 odds.</p>
             <div className="trust-row">
@@ -237,7 +237,7 @@ export default function App() {
 
         <section className="content-section god-board" id="board">
           <div className="section-heading clean-heading">
-            <div><span className="eyebrow"><BrainCircuit size={14} /> {selectedLabel.short.toUpperCase()} PICKS</span><h2>Pick a god</h2></div>
+            <div><span className="eyebrow"><BrainCircuit size={14} /> {selectedLabel.short.toUpperCase()} PICKS</span><h2>{availableGods.length ? 'Pick a god' : 'Today’s picks'}</h2></div>
             <button className="refresh-button" onClick={refreshPicks} disabled={loading}><RefreshCw size={16} />{loading ? 'Refreshing' : 'Refresh'}</button>
           </div>
 

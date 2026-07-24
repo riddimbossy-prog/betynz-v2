@@ -113,7 +113,8 @@ app.post('/api/v1/predictions/refresh', async (_req: express.Request, res: expre
   try {
     const rebuild = await requestPipelineRebuild('public-refresh');
     const dashboard = await getPredictionDashboard();
-    res.status(rebuild.coolingDown ? 200 : 201).json({
+    const statusCode = rebuild.run.status === 'failed' ? 502 : rebuild.coolingDown ? 200 : 201;
+    res.status(statusCode).json({
       rebuild: {
         accepted: rebuild.accepted,
         joined: rebuild.joined,
@@ -122,7 +123,8 @@ app.post('/api/v1/predictions/refresh', async (_req: express.Request, res: expre
         status: rebuild.run.status,
         completedAt: rebuild.run.completedAt
       },
-      dashboard
+      dashboard,
+      ...(rebuild.run.status === 'failed' ? { error: 'PIPELINE_REBUILD_FAILED' } : {})
     });
   } catch (error) { next(error); }
 });

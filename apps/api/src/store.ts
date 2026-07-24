@@ -61,7 +61,7 @@ export async function allMatches(): Promise<NormalizedMatch[]> {
   return rows.map(dbToApi);
 }
 
-export async function upsertMatches(matches: NormalizedMatch[]) {
+export async function upsertMatches(matches: NormalizedMatch[], source = 'football-data.co.uk') {
   if (!supabase) throw new Error('Supabase is not configured. Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
   const rows = matches.map((m) => ({
     external_id: m.id,
@@ -79,7 +79,7 @@ export async function upsertMatches(matches: NormalizedMatch[]) {
     result: m.result,
     stats: m.stats ?? {},
     odds: m.odds,
-    source: 'football-data.co.uk'
+    source
   }));
   const chunk = 300;
   for (let i = 0; i < rows.length; i += chunk) {
