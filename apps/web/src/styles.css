@@ -270,7 +270,7 @@ main { width: min(1380px, calc(100% - 38px)); margin: 0 auto; }
   .mobile-nav { position: fixed; z-index: 40; bottom: 0; left: 0; right: 0; height: calc(68px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); background: rgba(8,10,15,.94); backdrop-filter: blur(18px); }
   .mobile-nav a, .mobile-nav button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #8f98aa; border: 0; background: transparent; font-size: 10px; }
   .mobile-nav svg { width: 19px; }
-  .mobile-nav a:nth-child(2) { color: var(--orange-2); }
+  .mobile-nav a:nth-child(2), .mobile-nav a:nth-child(3) { color: var(--orange-2); }
   .explanation-drawer { padding: 80px 20px 30px; }
   .explanation-drawer h2 { font-size: 31px; }
 }
@@ -423,7 +423,7 @@ main { width: min(1380px, calc(100% - 38px)); margin: 0 auto; }
   .radar-fixture-line { min-height: auto; }
 }
 
-/* Zeus Streak Intelligence 2.7 auto-pick battle board */
+/* Zeus + Ares Streak Intelligence 2.8 auto-pick battle board */
 .zeus-auto-section {
   position: relative;
   border-top: 1px solid rgba(255,148,64,.18);
@@ -544,4 +544,67 @@ main { width: min(1380px, calc(100% - 38px)); margin: 0 auto; }
 @media (max-width: 680px) {
   .zeus-auto-copy h3,
   .zeus-auto-copy p { white-space: normal; }
+}
+
+
+/* v2.8 Ares streak-favorite specialist */
+.ares-section {
+  position: relative;
+  margin-top: 34px;
+  padding-top: 34px;
+  border-top: 1px solid rgba(255, 181, 71, .2);
+}
+.ares-section::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 220px;
+  pointer-events: none;
+  background: radial-gradient(circle at 82% 0, rgba(255, 181, 71, .09), transparent 48%);
+}
+.ares-grid {
+  position: relative;
+}
+.ares-grid .prediction-card {
+  border-color: rgba(255, 181, 71, .28);
+  background: radial-gradient(circle at 90% 0, rgba(255, 181, 71, .12), transparent 38%), linear-gradient(145deg, #171821, #10131a);
+}
+.ares-badge {
+  padding: 6px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(255, 190, 90, .24);
+  border-radius: 999px;
+  color: #ffd392;
+  background: rgba(255, 171, 54, .12);
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.ares-note {
+  display: flex;
+  gap: 12px;
+  padding: 15px;
+  margin: 14px 0;
+  border: 1px solid rgba(255, 190, 90, .24);
+  border-radius: 13px;
+  background: rgba(255, 171, 54, .09);
+}
+.ares-note > svg {
+  flex: 0 0 auto;
+  color: #ffc76f;
+}
+.ares-note strong { color: #ffe2b2; }
+.ares-note p {
+  margin: 4px 0 0;
+  color: #b9b1a3;
+  line-height: 1.5;
+}
+@media (min-width: 901px) {
+  .engine-grid { grid-template-columns: repeat(5, 1fr); }
+}
+@media (max-width: 680px) {
+  .mobile-nav a, .mobile-nav button { font-size: 9px; }
 }

@@ -148,6 +148,9 @@ export type FixtureBattleResult = {
 export type PredictionDashboard = {
   source: 'supabase' | 'demo';
   generatedAt: string;
+  engineVersion: string;
+  currentEngineReady: boolean;
+  rebuilding: boolean;
   window: { from: string; to: string; days: string[] };
   metrics: {
     fixtures: number;
@@ -160,9 +163,11 @@ export type PredictionDashboard = {
     lowOddsUpgrades: number;
     pricedFixtures: number;
     zeusAutoPicks: number;
+    streakFavorites: number;
   };
   bankers: PredictionRecord[];
   predictions: PredictionRecord[];
   zeusAutoPicks: PredictionRecord[];
+  streakFavorites: PredictionRecord[];
   radarFixtures: UpcomingFixture[];
 };

@@ -15,6 +15,10 @@ import {
 } from './store.js';
 import type { PredictionDashboard } from './forecast-types.js';
 
+let lazyRebuildPromise: Promise<void> | null = null;
+let lastLazyRebuildAttempt = 0;
+const LAZY_REBUILD_COOLDOWN_MS = 10 * 60 * 1000;
+
 function dateInTimeZone(timeZone = process.env.PREDICTION_TIMEZONE || 'Africa/Accra') {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
@@ -98,21 +102,58 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
     listPredictions(start, end),
     listUpcomingFixtures(start, end)
   ]);
+
+  const hasCurrentEngineRows = allPredictions.some((prediction) => prediction.engineVersion === ENGINE_VERSION);
+  const needsCurrentEngineRows = sourceName() === 'supabase' && fixtures.length > 0 && !hasCurrentEngineRows;
+
+  if (needsCurrentEngineRows) {
+    if (!lazyRebuildPromise && Date.now() - lastLazyRebuildAttempt >= LAZY_REBUILD_COOLDOWN_MS) {
+      lastLazyRebuildAttempt = Date.now();
+      lazyRebuildPromise = rebuildPredictions(start, end)
+        .then(() => undefined)
+        .catch((error) => {
+          console.error('[Betynz] Automatic prediction rebuild failed:', error);
+        })
+        .finally(() => {
+          lazyRebuildPromise = null;
+        });
+    }
+  }
   const radarFixtures = fixtures
     .filter((fixture) => Boolean(fixture.odds.home && fixture.odds.draw && fixture.odds.away))
     .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
-  const sorted = allPredictions
-    .filter((prediction) => prediction.engineVersion === ENGINE_VERSION)
+  const currentEnginePredictions = allPredictions.filter((prediction) => prediction.engineVersion === ENGINE_VERSION);
+  const fallbackEngineVersion = currentEnginePredictions.length === 0
+    ? [...allPredictions].sort((a, b) => b.runAt.localeCompare(a.runAt))[0]?.engineVersion
+    : undefined;
+  const activeEngineVersion = fallbackEngineVersion || ENGINE_VERSION;
+  const activePredictions = currentEnginePredictions.length > 0
+    ? currentEnginePredictions
+    : allPredictions.filter((prediction) => prediction.engineVersion === activeEngineVersion);
+  const sorted = activePredictions
     .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
   const bankers = [...sorted]
     .filter((prediction) => prediction.banker && prediction.tier === 'full')
     .sort((a, b) => b.confidence - a.confidence || b.edge - a.edge);
   const zeusAutoPicks = [...sorted]
-    .filter((prediction) => prediction.tier === 'full')
-    .sort((a, b) => b.confidence + b.edge * 0.6 - (a.confidence + a.edge * 0.6) || a.kickoff.localeCompare(b.kickoff));
+    .sort((a, b) => {
+      const tierDifference = Number(b.tier === 'full') - Number(a.tier === 'full');
+      if (tierDifference) return tierDifference;
+      const bankerDifference = Number(b.banker) - Number(a.banker);
+      if (bankerDifference) return bankerDifference;
+      return b.confidence + b.edge * 0.6 - (a.confidence + a.edge * 0.6) || a.kickoff.localeCompare(b.kickoff);
+    });
+  const streakFavorites = [...sorted]
+    .filter((prediction) => prediction.qualification === 'ARES_STREAK_FAVOURITE')
+    .sort((a, b) => Number(b.evidence.aresScore ?? 0) - Number(a.evidence.aresScore ?? 0)
+      || b.confidence - a.confidence
+      || a.kickoff.localeCompare(b.kickoff));
   return {
     source: sourceName(),
     generatedAt: new Date().toISOString(),
+    engineVersion: activeEngineVersion,
+    currentEngineReady: currentEnginePredictions.length > 0,
+    rebuilding: Boolean(lazyRebuildPromise),
     window: { from: start, to: end, days },
     metrics: {
       fixtures: fixtures.length,
@@ -124,11 +165,13 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
       pickLeagues: new Set(sorted.map((prediction) => `${prediction.country}|${prediction.leagueName}`)).size,
       lowOddsUpgrades: sorted.filter((prediction) => prediction.upgraded).length,
       pricedFixtures: radarFixtures.length,
-      zeusAutoPicks: zeusAutoPicks.length
+      zeusAutoPicks: zeusAutoPicks.length,
+      streakFavorites: streakFavorites.length
     },
     bankers,
     predictions: sorted,
     zeusAutoPicks,
+    streakFavorites,
     radarFixtures
   };
 }

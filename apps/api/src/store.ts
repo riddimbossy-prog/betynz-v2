@@ -11,6 +11,20 @@ const supabase: SupabaseClient | null = url && key ? createClient(url, key, { au
 const demoRejectedBattles: RejectedBattle[] = [];
 const demoStreakSnapshots: TeamStreakSnapshot[] = [];
 
+function isMissingOptionalIntelligenceTable(error: unknown) {
+  const value = error as { code?: string; message?: string; details?: string; hint?: string } | null;
+  const text = `${value?.code ?? ''} ${value?.message ?? ''} ${value?.details ?? ''} ${value?.hint ?? ''}`.toLowerCase();
+  return value?.code === '42P01'
+    || value?.code === 'PGRST205'
+    || ((text.includes('streak_snapshots') || text.includes('confrontation_records') || text.includes('rejected_battles'))
+      && (text.includes('does not exist') || text.includes('schema cache') || text.includes('could not find')));
+}
+
+function warnOptionalIntelligenceFallback(table: string, error: unknown) {
+  const value = error as { message?: string } | null;
+  console.warn(`[Betynz] Optional ${table} table is unavailable. Predictions will continue with computed-history intelligence. ${value?.message ?? ''}`.trim());
+}
+
 export function sourceName() {
   return supabase ? 'supabase' as const : 'demo' as const;
 }
@@ -267,7 +281,13 @@ export async function upsertStreakSnapshots(snapshots: TeamStreakSnapshot[]) {
       .eq('league_code', example.leagueCode)
       .eq('season', example.season)
       .eq('source', example.source);
-    if (error) throw error;
+    if (error) {
+      if (isMissingOptionalIntelligenceTable(error)) {
+        warnOptionalIntelligenceFallback('streak_snapshots', error);
+        return 0;
+      }
+      throw error;
+    }
     for (const row of data ?? []) {
       const snapshot = dbToStreakSnapshot(row);
       merged.set(streakSnapshotKey(snapshot), snapshot);
@@ -301,7 +321,13 @@ export async function upsertStreakSnapshots(snapshots: TeamStreakSnapshot[]) {
     const { error } = await supabase.from('streak_snapshots').upsert(rows.slice(i, i + 250), {
       onConflict: 'snapshot_date,league_code,season,team_key,scope,source'
     });
-    if (error) throw error;
+    if (error) {
+      if (isMissingOptionalIntelligenceTable(error)) {
+        warnOptionalIntelligenceFallback('streak_snapshots', error);
+        return 0;
+      }
+      throw error;
+    }
   }
   return rows.length;
 }
@@ -323,7 +349,13 @@ export async function listStreakSnapshots(from: string, to: string): Promise<Tea
       .lte('snapshot_date', to)
       .order('snapshot_date', { ascending: false })
       .range(offset, offset + pageSize - 1);
-    if (error) throw error;
+    if (error) {
+      if (isMissingOptionalIntelligenceTable(error)) {
+        warnOptionalIntelligenceFallback('streak_snapshots', error);
+        return [];
+      }
+      throw error;
+    }
     rows.push(...(data ?? []));
     if (!data || data.length < pageSize) break;
   }
@@ -355,7 +387,13 @@ export async function upsertConfrontationRecords(records: ConfrontationRecord[])
     const { error } = await supabase.from('confrontation_records').upsert(rows.slice(i, i + 250), {
       onConflict: 'fixture_id,engine_version'
     });
-    if (error) throw error;
+    if (error) {
+      if (isMissingOptionalIntelligenceTable(error)) {
+        warnOptionalIntelligenceFallback('confrontation_records', error);
+        return 0;
+      }
+      throw error;
+    }
   }
   return rows.length;
 }
@@ -375,7 +413,13 @@ export async function replaceRejectedBattles(from: string, to: string, engineVer
     .eq('engine_version', engineVersion)
     .gte('match_date', from)
     .lte('match_date', to);
-  if (deleteError) throw deleteError;
+  if (deleteError) {
+    if (isMissingOptionalIntelligenceTable(deleteError)) {
+      warnOptionalIntelligenceFallback('rejected_battles', deleteError);
+      return 0;
+    }
+    throw deleteError;
+  }
   const rows = records.map((record) => ({
     fixture_id: record.fixtureId,
     engine_version: record.engineVersion,
@@ -398,7 +442,13 @@ export async function replaceRejectedBattles(from: string, to: string, engineVer
     const { error } = await supabase.from('rejected_battles').upsert(rows.slice(i, i + 250), {
       onConflict: 'fixture_id,engine_version'
     });
-    if (error) throw error;
+    if (error) {
+      if (isMissingOptionalIntelligenceTable(error)) {
+        warnOptionalIntelligenceFallback('rejected_battles', error);
+        return 0;
+      }
+      throw error;
+    }
   }
   return rows.length;
 }
@@ -419,7 +469,13 @@ export async function listRejectedBattles(from: string, to: string, limit = 500,
     .limit(limit);
   if (engineVersion) query = query.eq('engine_version', engineVersion);
   const { data, error } = await query;
-  if (error) throw error;
+  if (error) {
+    if (isMissingOptionalIntelligenceTable(error)) {
+      warnOptionalIntelligenceFallback('rejected_battles', error);
+      return [];
+    }
+    throw error;
+  }
   return (data ?? []).map((row: any) => ({
     fixtureId: row.fixture_id,
     engineVersion: row.engine_version,

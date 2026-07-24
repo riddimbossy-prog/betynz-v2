@@ -30,11 +30,15 @@ import type { HistoricalDashboard, Prediction, PredictionDashboard, UpcomingFixt
 const emptyPredictions: PredictionDashboard = {
   source: 'offline',
   generatedAt: new Date().toISOString(),
+  engineVersion: 'zeus-chronos-ares-2.8.0',
+  currentEngineReady: false,
+  rebuilding: false,
   window: { from: '', to: '', days: [] },
-  metrics: { fixtures: 0, picks: 0, fullPicks: 0, provisionalPicks: 0, bankers: 0, leagues: 0, pickLeagues: 0, lowOddsUpgrades: 0, pricedFixtures: 0, zeusAutoPicks: 0 },
+  metrics: { fixtures: 0, picks: 0, fullPicks: 0, provisionalPicks: 0, bankers: 0, leagues: 0, pickLeagues: 0, lowOddsUpgrades: 0, pricedFixtures: 0, zeusAutoPicks: 0, streakFavorites: 0 },
   bankers: [],
   predictions: [],
   zeusAutoPicks: [],
+  streakFavorites: [],
   radarFixtures: []
 };
 
@@ -91,6 +95,7 @@ function PredictionCard({ prediction, onExplain, inList, onToggleList }: {
           <span className="kickoff"><Clock3 size={14} />{timeLabel(prediction.kickoff)}</span>
         </div>
         <div className="card-badges">
+          {prediction.qualification === 'ARES_STREAK_FAVOURITE' && <span className="ares-badge"><Target size={13} />Ares Favorite</span>}
           {prediction.tier === 'provisional' && <span className="provisional-badge"><Info size={13} />Provisional</span>}
           {prediction.upgraded && <span className="upgrade-badge"><TrendingUp size={13} />Upgraded</span>}
           {prediction.banker && <span className="banker-badge"><Star size={13} />Banker</span>}
@@ -104,7 +109,7 @@ function PredictionCard({ prediction, onExplain, inList, onToggleList }: {
       </div>
 
       <div className="selection-panel">
-        <div><small>{prediction.tier === 'full' ? 'Full Chronos selection' : 'Provisional odds selection'}</small><h3>{prediction.selection}</h3></div>
+        <div><small>{prediction.qualification === 'ARES_STREAK_FAVOURITE' ? 'Ares streak favorite' : prediction.tier === 'full' ? 'Full Chronos selection' : 'Provisional odds selection'}</small><h3>{prediction.selection}</h3></div>
         <div className="price"><small>Odds</small><strong>{prediction.odds.toFixed(2)}</strong></div>
       </div>
 
@@ -172,7 +177,7 @@ function ZeusAutoCard({ prediction, rank, onExplain }: { prediction: Prediction;
     <article className="zeus-auto-card">
       <span className="zeus-auto-rank">#{rank}</span>
       <div className="zeus-auto-copy">
-        <small>{prediction.country ? `${prediction.country} · ` : ''}{prediction.leagueName} · {timeLabel(prediction.kickoff)}</small>
+        <small>{prediction.country ? `${prediction.country} · ` : ''}{prediction.leagueName} · {timeLabel(prediction.kickoff)} {prediction.tier === 'provisional' ? '· Provisional' : '· Fully validated'}</small>
         <h3>{prediction.homeTeam} <span>vs</span> {prediction.awayTeam}</h3>
         <p>{signal}</p>
       </div>
@@ -196,12 +201,19 @@ export default function App() {
   const [query, setQuery] = useState('');
   const [analysisList, setAnalysisList] = useState<Set<string>>(new Set());
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     Promise.allSettled([loadPredictions(), loadHistoricalDashboard()]).then(([predictionsResult, historyResult]) => {
       if (predictionsResult.status === 'fulfilled') {
-        setData(predictionsResult.value);
-        setSelectedDate(predictionsResult.value.window.days[0] || '');
+        const incoming = predictionsResult.value;
+        setData(incoming);
+        const visiblePicks = incoming.zeusAutoPicks?.length ? incoming.zeusAutoPicks : incoming.predictions;
+        const firstDateWithPicks = incoming.window.days.find((date) => visiblePicks.some((prediction) => prediction.date === date));
+        setSelectedDate(firstDateWithPicks || incoming.window.days[0] || '');
+        setLoadError('');
+      } else {
+        setLoadError('The picks API did not respond. Refresh the board after the API deployment finishes.');
       }
       if (historyResult.status === 'fulfilled') setHistory(historyResult.value);
       setLoading(false);
@@ -224,6 +236,30 @@ export default function App() {
     setInstallPrompt(null);
   };
 
+  const refreshPicks = async () => {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const incoming = await loadPredictions();
+      setData(incoming);
+      const visiblePicks = incoming.zeusAutoPicks?.length ? incoming.zeusAutoPicks : incoming.predictions;
+      const preferredDate = incoming.window.days.find((date) => visiblePicks.some((prediction) => prediction.date === date));
+      setSelectedDate((current) => current && incoming.window.days.includes(current) && visiblePicks.some((prediction) => prediction.date === current)
+        ? current
+        : preferredDate || incoming.window.days[0] || '');
+    } catch {
+      setLoadError('The picks API is still unavailable. Check that the Render API deployment is live.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!data.rebuilding) return;
+    const timer = window.setTimeout(() => { void refreshPicks(); }, 8000);
+    return () => window.clearTimeout(timer);
+  }, [data.rebuilding]);
+
   const datePredictions = useMemo(() => {
     const q = query.trim().toLowerCase();
     return data.predictions
@@ -235,6 +271,7 @@ export default function App() {
   const fullPredictions = useMemo(() => datePredictions.filter((prediction) => prediction.tier === 'full'), [datePredictions]);
   const provisionalPredictions = useMemo(() => datePredictions.filter((prediction) => prediction.tier === 'provisional'), [datePredictions]);
   const bankers = useMemo(() => fullPredictions.filter((prediction) => prediction.banker).slice(0, 3), [fullPredictions]);
+  const streakFavorites = useMemo(() => (data.streakFavorites ?? []).filter((prediction) => prediction.date === selectedDate), [data.streakFavorites, selectedDate]);
   const zeusAutoPicks = useMemo(() => (data.zeusAutoPicks ?? data.predictions).filter((prediction) => prediction.date === selectedDate).slice(0, 12), [data.zeusAutoPicks, data.predictions, selectedDate]);
   const regular = useMemo(() => fullPredictions.filter((prediction) => !prediction.banker), [fullPredictions]);
   const predictionByFixture = useMemo(() => new Map(data.predictions.map((prediction) => [prediction.fixtureId, prediction])), [data.predictions]);
@@ -286,9 +323,9 @@ export default function App() {
       <main id="top">
         <section className="hero">
           <div className="hero-copy">
-            <span className="eyebrow"><Sparkles size={14} /> ZEUS AUTO PICKS 2.7</span>
-            <h1>One battle. One tip.<br /><span>Streaks, HT/FT and odds in agreement.</span></h1>
-            <p>Zeus now makes every available market compete for one final selection. Chronos checks old odds, Athena validates team and HT/FT statistics, and Leonidas rejects contradictions before anything is published.</p>
+            <span className="eyebrow"><Sparkles size={14} /> ZEUS + ARES AUTO PICKS 2.8</span>
+            <h1>One battle. One tip.<br /><span>Ares finds the strongest sub-1.60 streak favorites.</span></h1>
+            <p>Zeus still makes every market compete, while Ares identifies clear 1X2 favorites priced from 1.19 to 1.59 only when the favorite's positive streak and the opponent's negative streak agree.</p>
             <div className="hero-actions">
               <a className="primary-button" href="#bankers"><Star size={18} />See Today’s Bankers</a>
               <a className="secondary-button" href="#board"><BarChart3 size={18} />Open Full Board</a>
@@ -304,8 +341,8 @@ export default function App() {
             <div className="hero-metric-grid">
               <span><small>Bankers</small><strong>{data.metrics.bankers}</strong></span>
               <span><small>Priced fixtures</small><strong>{data.metrics.pricedFixtures}</strong></span>
-              <span><small>Leagues</small><strong>{data.metrics.leagues}</strong></span>
-              <span><small>Streak-tested</small><strong>{data.metrics.zeusAutoPicks}</strong></span>
+              <span><small>Ares &lt;1.60</small><strong>{data.metrics.streakFavorites}</strong></span>
+              <span><small>Auto picks</small><strong>{data.metrics.zeusAutoPicks}</strong></span>
             </div>
           </div>
         </section>
@@ -328,8 +365,30 @@ export default function App() {
         <section className="metrics-row">
           <article><span><Target /></span><div><small>{selectedLabel.short} qualified picks</small><strong>{datePredictions.length}</strong></div></article>
           <article><span><Trophy /></span><div><small>{selectedLabel.short} bankers</small><strong>{bankers.length}</strong></div></article>
-          <article><span><BrainCircuit /></span><div><small>Engine version</small><strong>2.7</strong></div></article>
-          <article><span><Activity /></span><div><small>{selectedLabel.short} fixtures on radar</small><strong>{radarFixtures.length}</strong></div></article>
+          <article><span><BrainCircuit /></span><div><small>{data.currentEngineReady ? 'Engine version' : data.rebuilding ? 'Engine syncing' : 'Fallback feed'}</small><strong>{data.engineVersion.split('-').at(-1) || '2.8.0'}</strong></div></article>
+          <article><span><Target /></span><div><small>{selectedLabel.short} Ares favorites</small><strong>{streakFavorites.length}</strong></div></article>
+        </section>
+
+        <section className="content-section ares-section" id="ares-favorites">
+          <div className="section-heading">
+            <div><span className="eyebrow"><Target size={14} /> ARES STREAK FAVORITES</span><h2>Favorites below 1.60 with streak agreement</h2><p>Ares only identifies a home or away win when the 1X2 favorite is priced from 1.19 to 1.59, the favorite carries a positive streak, and the opponent carries a matching negative streak without a stronger contradiction.</p></div>
+            <span className="board-count">{streakFavorites.length} identified</span>
+          </div>
+          {streakFavorites.length === 0 ? (
+            <div className="empty-panel compact"><ShieldCheck /><div><h3>No Ares favorite qualified for this day</h3><p>A favorite below 1.60 may still be rejected when the streaks disagree, the opponent is unbeaten, or the price has no model support.</p></div></div>
+          ) : (
+            <div className="prediction-grid ares-grid">
+              {streakFavorites.map((prediction) => (
+                <PredictionCard
+                  key={`ares-${prediction.fixtureId}`}
+                  prediction={prediction}
+                  onExplain={() => setSelectedPrediction(prediction)}
+                  inList={analysisList.has(prediction.fixtureId)}
+                  onToggleList={() => toggleList(prediction.fixtureId)}
+                />
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="content-section zeus-auto-section" id="zeus-auto">
@@ -338,7 +397,7 @@ export default function App() {
             <span className="board-count">{zeusAutoPicks.length} auto picks</span>
           </div>
           {zeusAutoPicks.length === 0 ? (
-            <div className="empty-panel compact"><ShieldCheck /><div><h3>No Zeus pick survived for this day</h3><p>The engine did not force a tip after the streak and Leonidas checks.</p></div></div>
+            <div className="empty-panel compact"><ShieldCheck /><div><h3>{loadError || (data.rebuilding ? 'Zeus is rebuilding the Auto Picks feed' : 'No Zeus pick survived for this day')}</h3><p>{loadError ? 'The page is loaded, but it could not receive the latest prediction feed.' : data.rebuilding ? 'The API found fixtures but no current-engine picks, so it started a safe rebuild. Refresh shortly.' : 'The engine did not force a tip after the streak and Leonidas checks. Try another date or refresh the feed.'}</p><button className="why-button" onClick={refreshPicks} disabled={loading}><Activity size={16} />{loading ? 'Refreshing…' : 'Refresh picks'}</button></div></div>
           ) : (
             <div className="zeus-auto-list">
               {zeusAutoPicks.map((prediction, index) => (
@@ -376,12 +435,13 @@ export default function App() {
         <section className="engine-consensus content-section">
           <div className="section-heading">
             <div><span className="eyebrow">THE OLYMPIAN ROOM</span><h2>How every pick is checked</h2></div>
-            <span className="status-pill">4 / 4 online</span>
+            <span className="status-pill">4 validators + Ares</span>
           </div>
           <div className="engine-grid">
             <article><span>◴</span><div><h3>Chronos</h3><p>Compares the fixture with the closest historical 1X2 and goal-odds profiles.</p></div></article>
             <article><span>Α</span><div><h3>Athena</h3><p>Validates form, venue splits, O/U 2.5 streaks and HT/FT overall, home and away records.</p></div></article>
             <article><span>ϟ</span><div><h3>Zeus</h3><p>Makes every eligible market compete and publishes only the highest battle score.</p></div></article>
+            <article><span>ΑΡ</span><div><h3>Ares</h3><p>Finds 1.19-1.59 win favorites only when positive and negative streaks confront in the same direction.</p></div></article>
             <article><span>Λ</span><div><h3>Leonidas</h3><p>Rejects conflicting streaks, thin samples, weak value and failed 1.19 upgrades.</p></div></article>
           </div>
         </section>
@@ -468,6 +528,7 @@ export default function App() {
         <button className="drawer-close" onClick={() => setMenuOpen(false)}><X /></button>
         <span className="eyebrow">BETYNZ NAVIGATION</span>
         <a href="#top" onClick={() => setMenuOpen(false)}>Overview</a>
+        <a href="#ares-favorites" onClick={() => setMenuOpen(false)}>Ares Favorites</a>
         <a href="#zeus-auto" onClick={() => setMenuOpen(false)}>Zeus Auto Picks</a>
         <a href="#bankers" onClick={() => setMenuOpen(false)}>Bankers</a>
         <a href="#board" onClick={() => setMenuOpen(false)}>Full board</a>
@@ -486,6 +547,9 @@ export default function App() {
             <h2>{selectedPrediction.selection}</h2>
             <p className="modal-fixture">{selectedPrediction.homeTeam} vs {selectedPrediction.awayTeam}</p>
             <div className="modal-summary"><ShieldCheck /><p>{selectedPrediction.summary}</p></div>
+            {selectedPrediction.qualification === 'ARES_STREAK_FAVOURITE' && (
+              <div className="ares-note"><Target /><div><strong>Ares streak favorite</strong><p>The favorite is priced from 1.19 to 1.59 and passed the positive-streak versus negative-streak confrontation gate. This is still a model selection, not a guaranteed result.</p></div></div>
+            )}
             {selectedPrediction.tier === 'provisional' && (
               <div className="provisional-note"><Info /><div><strong>Provisional selection</strong><p>This pick passed the global 1X2 odds-pattern gate, but local league and team history is not yet deep enough for full Chronos status or Banker eligibility.</p></div></div>
             )}
@@ -509,6 +573,12 @@ export default function App() {
               <span><small>Away O2.5 / U2.5</small><strong>{evidenceValue(selectedPrediction, 'awayOver25Streak')} / {evidenceValue(selectedPrediction, 'awayUnder25Streak')}</strong></span>
               <span><small>Home HT lead → win</small><strong>{evidenceValue(selectedPrediction, 'homeLeadToWinRate')}%</strong></span>
               <span><small>Away HT lead → win</small><strong>{evidenceValue(selectedPrediction, 'awayLeadToWinRate')}%</strong></span>
+              {selectedPrediction.qualification === 'ARES_STREAK_FAVOURITE' && <>
+                <span><small>Ares score</small><strong>{evidenceValue(selectedPrediction, 'aresScore')}%</strong></span>
+                <span><small>Ares confirmations</small><strong>{evidenceValue(selectedPrediction, 'aresConfirmations')}</strong></span>
+                <span><small>Favorite wins / unbeaten</small><strong>{evidenceValue(selectedPrediction, 'aresFavouriteWinStreak')} / {evidenceValue(selectedPrediction, 'aresFavouriteUnbeatenStreak')}</strong></span>
+                <span><small>Opponent losses / no-win</small><strong>{evidenceValue(selectedPrediction, 'aresOpponentLossStreak')} / {evidenceValue(selectedPrediction, 'aresOpponentNoWinStreak')}</strong></span>
+              </>}
             </div>
             <h3>Engine checks</h3>
             <div className="engine-detail-list">
@@ -527,8 +597,8 @@ export default function App() {
 
       <nav className="mobile-nav">
         <a href="#top"><Activity /><span>Home</span></a>
+        <a href="#ares-favorites"><Target /><span>Ares</span></a>
         <a href="#zeus-auto"><Zap /><span>Auto Picks</span></a>
-        <a href="#radar"><Activity /><span>Radar</span></a>
         <button onClick={() => setMenuOpen(true)}><Menu /><span>Menu</span></button>
       </nav>
     </div>

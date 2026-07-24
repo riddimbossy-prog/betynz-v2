@@ -3,7 +3,7 @@ import type { EngineSignal, FixtureBattleResult, MarketKey, PredictionRecord, Re
 import { sameLeague, teamKey } from './identity.js';
 import { buildFixtureStreakIntelligence, toConfrontationRecord, type FixtureStreakIntelligence, type TeamStreakSnapshot } from './streak-intelligence.js';
 
-export const ENGINE_VERSION = 'zeus-chronos-fusion-2.7.0';
+export const ENGINE_VERSION = 'zeus-chronos-ares-2.8.0';
 
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value));
 const pct = (wins: number, sample: number, fallback = 0.5) => sample ? wins / sample : fallback;
@@ -774,6 +774,150 @@ function eligible(candidate: Candidate, strict = false) {
     && passedEngines >= (strict ? 4 : 3);
 }
 
+type AresFavouriteDecision = {
+  candidate: Candidate;
+  side: 'home' | 'away';
+  team: string;
+  score: number;
+  confirmations: number;
+  reasons: string[];
+  directionalSignal: string;
+  favouriteWinStreak: number;
+  favouriteUnbeatenStreak: number;
+  opponentLossStreak: number;
+  opponentNoWinStreak: number;
+};
+
+function identifyAresFavourite(
+  fixture: UpcomingFixture,
+  intelligence: FixtureStreakIntelligence,
+  candidates: Map<MarketKey, Candidate>
+): AresFavouriteDecision | null {
+  const homeOdd = fixture.odds.home;
+  const awayOdd = fixture.odds.away;
+  if (!homeOdd || !awayOdd || homeOdd === awayOdd) return null;
+
+  const side: 'home' | 'away' = homeOdd < awayOdd ? 'home' : 'away';
+  const favouriteOdd = side === 'home' ? homeOdd : awayOdd;
+  if (favouriteOdd < 1.19 || favouriteOdd >= 1.60) return null;
+
+  const market: MarketKey = side === 'home' ? 'HOME_WIN' : 'AWAY_WIN';
+  const candidate = candidates.get(market);
+  if (!candidate) return null;
+
+  const favouriteVenue = side === 'home' ? intelligence.home : intelligence.away;
+  const favouriteOverall = side === 'home' ? intelligence.homeOverall : intelligence.awayOverall;
+  const opponentVenue = side === 'home' ? intelligence.away : intelligence.home;
+  const opponentOverall = side === 'home' ? intelligence.awayOverall : intelligence.homeOverall;
+  const oppositeSide: 'home' | 'away' = side === 'home' ? 'away' : 'home';
+
+  const favouriteWins = Math.max(favouriteVenue.adjusted.wins, favouriteOverall.adjusted.wins * 0.75);
+  const favouriteUnbeaten = Math.max(favouriteVenue.adjusted.unbeaten, favouriteOverall.adjusted.unbeaten * 0.75);
+  const favouriteLosses = Math.max(favouriteVenue.adjusted.losses, favouriteOverall.adjusted.losses * 0.75);
+  const favouriteNoWin = Math.max(favouriteVenue.adjusted.noWin, favouriteOverall.adjusted.noWin * 0.75);
+  const opponentLosses = Math.max(opponentVenue.adjusted.losses, opponentOverall.adjusted.losses * 0.75);
+  const opponentNoWin = Math.max(opponentVenue.adjusted.noWin, opponentOverall.adjusted.noWin * 0.75);
+  const opponentWins = Math.max(opponentVenue.adjusted.wins, opponentOverall.adjusted.wins * 0.75);
+  const opponentUnbeaten = Math.max(opponentVenue.adjusted.unbeaten, opponentOverall.adjusted.unbeaten * 0.75);
+
+  const directionalSignals = intelligence.signals
+    .filter((item) => item.compatible && item.marketBias === side)
+    .sort((a, b) => b.score - a.score);
+  const oppositeSignals = intelligence.signals
+    .filter((item) => item.compatible && item.marketBias === oppositeSide)
+    .sort((a, b) => b.score - a.score);
+  const strongestDirectional = directionalSignals[0];
+  const strongestOpposite = oppositeSignals[0];
+
+  const favouritePositive = favouriteWins >= 1.75 || favouriteUnbeaten >= 3.2;
+  const opponentNegative = opponentLosses >= 1.75 || opponentNoWin >= 3.2;
+  const directSignal = Boolean(strongestDirectional && strongestDirectional.score >= 50);
+  const htftSupport = favouriteVenue.htft.sample >= 4 && favouriteVenue.htft.leadToWinRate >= 62;
+  const noDrawSupport = favouritePositive
+    && favouriteVenue.adjusted.noDraw >= 3
+    && opponentVenue.adjusted.noDraw >= 3;
+  const confirmations = [favouritePositive, opponentNegative, directSignal, htftSupport, noDrawSupport]
+    .filter(Boolean).length;
+
+  const oppositeDominates = Boolean(strongestOpposite
+    && strongestOpposite.score >= Math.max(65, (strongestDirectional?.score ?? 0) + 8));
+  const hardContradiction = favouriteLosses >= 1.8
+    || favouriteNoWin >= 2.8
+    || opponentWins >= 1.8
+    || opponentUnbeaten >= 3.8
+    || oppositeDominates;
+  if (hardContradiction) return null;
+
+  const oddsStrength = clamp((1.60 - favouriteOdd) / 0.41, 0, 1);
+  const score = clamp(
+    10
+    + oddsStrength * 10
+    + clamp(favouriteWins / 3, 0, 1) * 18
+    + clamp(favouriteUnbeaten / 5, 0, 1) * 13
+    + clamp(opponentLosses / 3, 0, 1) * 18
+    + clamp(opponentNoWin / 5, 0, 1) * 13
+    + clamp((strongestDirectional?.score ?? 0) / 100, 0, 1) * 10
+    + (htftSupport ? clamp(favouriteVenue.htft.leadToWinRate / 100, 0, 1) * 6 : 0)
+    + clamp(candidate.probability, 0, 1) * 7,
+    0,
+    100
+  );
+
+  const passedEngines = candidate.engines.filter((engine) => engine.pass).length;
+  const sampleReady = intelligence.home.sample >= 4 && intelligence.away.sample >= 4;
+  const coreAgreement = (favouritePositive && opponentNegative)
+    || (directSignal && (favouritePositive || opponentNegative));
+
+  if (!sampleReady
+    || !coreAgreement
+    || confirmations < 2
+    || score < 68
+    || intelligence.compatibility < 55
+    || intelligence.contradictionPenalty > 22
+    || candidate.sample < 60
+    || candidate.probability < 0.59
+    || candidate.confidence < 66
+    || candidate.edge < -0.015
+    || candidate.contradiction > 38
+    || candidate.dataCompleteness < 0.5
+    || passedEngines < 3) {
+    return null;
+  }
+
+  const team = side === 'home' ? fixture.homeTeam : fixture.awayTeam;
+  const opponent = side === 'home' ? fixture.awayTeam : fixture.homeTeam;
+  const reasons = [
+    `${team} are the clear 1X2 favourite at ${favouriteOdd.toFixed(2)}, inside Ares's 1.19-1.59 win range.`
+  ];
+  if (favouritePositive) {
+    reasons.push(`${team} bring a positive run: ${favouriteVenue.streaks.wins} straight venue wins and ${favouriteVenue.streaks.unbeaten} venue matches unbeaten.`);
+  }
+  if (opponentNegative) {
+    reasons.push(`${opponent} bring the opposite run: ${opponentVenue.streaks.losses} straight venue losses and ${opponentVenue.streaks.noWin} venue matches without a win.`);
+  }
+  if (strongestDirectional) reasons.push(strongestDirectional.note);
+  if (htftSupport) {
+    reasons.push(`${team} convert ${favouriteVenue.htft.leadToWinRate}% of venue half-time leads into full-time wins.`);
+  }
+  if (noDrawSupport) {
+    reasons.push(`Both teams are on no-draw runs, and the decisive streak direction favours ${team}.`);
+  }
+
+  return {
+    candidate,
+    side,
+    team,
+    score: round(score),
+    confirmations,
+    reasons,
+    directionalSignal: strongestDirectional?.label ?? 'Favourite streak agreement',
+    favouriteWinStreak: favouriteVenue.streaks.wins,
+    favouriteUnbeatenStreak: favouriteVenue.streaks.unbeaten,
+    opponentLossStreak: opponentVenue.streaks.losses,
+    opponentNoWinStreak: opponentVenue.streaks.noWin
+  };
+}
+
 function analyzeFullFixture(
   fixture: UpcomingFixture,
   allHistoricalMatches: NormalizedMatch[],
@@ -815,7 +959,8 @@ function analyzeFullFixture(
     .filter((candidate): candidate is Candidate => Boolean(candidate) && eligible(candidate!))
     .sort((a, b) => b.zeusBattleScore - a.zeusBattleScore || b.confidence - a.confidence);
 
-  let chosen = ranked[0];
+  const aresFavourite = identifyAresFavourite(fixture, streakIntelligence, candidates);
+  let chosen = aresFavourite?.candidate ?? ranked[0];
   if (!chosen) return null;
   let original: Candidate | undefined;
 
@@ -850,7 +995,12 @@ function analyzeFullFixture(
   const risk: 'Low' | 'Medium' = banker || (chosen.confidence >= 80 && chosen.contradiction <= 25) ? 'Low' : 'Medium';
   const selection = label(chosen.market, fixture);
   const confrontationText = streakIntelligence.strongestSignal?.label || 'team streak confrontation';
-  const summary = `${selection} won Zeus's market competition because ${chosen.sample} similar historical odds profiles, team statistics and the ${confrontationText.toLowerCase()} check point in the same direction.`;
+  const summary = aresFavourite
+    ? `${aresFavourite.team} were identified by Ares as a sub-1.60 favourite because the favourite's positive streak and the opponent's negative streak agree with the 1X2 price.`
+    : `${selection} won Zeus's market competition because ${chosen.sample} similar historical odds profiles, team statistics and the ${confrontationText.toLowerCase()} check point in the same direction.`;
+  const explanation = aresFavourite
+    ? [...aresFavourite.reasons, ...chosen.explanation].slice(0, 6)
+    : chosen.explanation.slice(0, 5);
 
   return {
     fixtureId: fixture.id,
@@ -877,9 +1027,9 @@ function analyzeFullFixture(
     sample: chosen.sample,
     banker,
     tier: 'full',
-    qualification: 'FULL_CHRONOS',
+    qualification: aresFavourite ? 'ARES_STREAK_FAVOURITE' : 'FULL_CHRONOS',
     risk,
-    explanation: chosen.explanation.slice(0, 5),
+    explanation,
     summary,
     evidence: {
       ...chosen.evidence,
@@ -889,7 +1039,18 @@ function analyzeFullFixture(
       lowOddsUpgrade: Boolean(original),
       fixtureProvider: fixture.provider ?? 'unknown',
       oddsSource: fixture.oddsSource ?? fixture.provider ?? 'unknown',
-      dataQuality: fixture.dataQuality ?? 60
+      dataQuality: fixture.dataQuality ?? 60,
+      aresFavourite: Boolean(aresFavourite),
+      aresScore: aresFavourite?.score ?? 0,
+      aresConfirmations: aresFavourite?.confirmations ?? 0,
+      aresFavouriteTeam: aresFavourite?.team ?? null,
+      aresFavouriteSide: aresFavourite?.side ?? null,
+      aresFavouriteOdds: aresFavourite ? round(aresFavourite.candidate.odd, 2) : null,
+      aresDirectionalSignal: aresFavourite?.directionalSignal ?? null,
+      aresFavouriteWinStreak: aresFavourite?.favouriteWinStreak ?? 0,
+      aresFavouriteUnbeatenStreak: aresFavourite?.favouriteUnbeatenStreak ?? 0,
+      aresOpponentLossStreak: aresFavourite?.opponentLossStreak ?? 0,
+      aresOpponentNoWinStreak: aresFavourite?.opponentNoWinStreak ?? 0
     },
     engines: chosen.engines,
     settledStatus: 'pending'
@@ -919,6 +1080,244 @@ function provisionalHistoricalNeighbors(matches: NormalizedMatch[], fixture: Upc
 function countTeamHistory(matches: NormalizedMatch[], team: string) {
   const key = teamKey(team);
   return matches.filter((match) => teamKey(match.homeTeam) === key || teamKey(match.awayTeam) === key).length;
+}
+
+function analyzeProvisionalAresFixture(
+  fixture: UpcomingFixture,
+  allHistoricalMatches: NormalizedMatch[],
+  intelligence: FixtureStreakIntelligence
+): PredictionRecord | null {
+  const homeOdd = fixture.odds.home;
+  const drawOdd = fixture.odds.draw;
+  const awayOdd = fixture.odds.away;
+  if (!homeOdd || !drawOdd || !awayOdd || homeOdd === awayOdd) return null;
+
+  const side: 'home' | 'away' = homeOdd < awayOdd ? 'home' : 'away';
+  const market: 'HOME_WIN' | 'AWAY_WIN' = side === 'home' ? 'HOME_WIN' : 'AWAY_WIN';
+  const selectedOdd = side === 'home' ? homeOdd : awayOdd;
+  if (selectedOdd < 1.19 || selectedOdd >= 1.60) return null;
+
+  const fair = fairThreeWay(fixture.odds);
+  if (!fair) return null;
+  const selectedFair = side === 'home' ? fair.home : fair.away;
+  if (selectedFair < 0.58) return null;
+
+  const favouriteVenue = side === 'home' ? intelligence.home : intelligence.away;
+  const favouriteOverall = side === 'home' ? intelligence.homeOverall : intelligence.awayOverall;
+  const opponentVenue = side === 'home' ? intelligence.away : intelligence.home;
+  const opponentOverall = side === 'home' ? intelligence.awayOverall : intelligence.homeOverall;
+  const oppositeSide: 'home' | 'away' = side === 'home' ? 'away' : 'home';
+
+  const favouriteWins = Math.max(favouriteVenue.adjusted.wins, favouriteOverall.adjusted.wins * 0.75);
+  const favouriteUnbeaten = Math.max(favouriteVenue.adjusted.unbeaten, favouriteOverall.adjusted.unbeaten * 0.75);
+  const favouriteLosses = Math.max(favouriteVenue.adjusted.losses, favouriteOverall.adjusted.losses * 0.75);
+  const favouriteNoWin = Math.max(favouriteVenue.adjusted.noWin, favouriteOverall.adjusted.noWin * 0.75);
+  const opponentLosses = Math.max(opponentVenue.adjusted.losses, opponentOverall.adjusted.losses * 0.75);
+  const opponentNoWin = Math.max(opponentVenue.adjusted.noWin, opponentOverall.adjusted.noWin * 0.75);
+  const opponentWins = Math.max(opponentVenue.adjusted.wins, opponentOverall.adjusted.wins * 0.75);
+  const opponentUnbeaten = Math.max(opponentVenue.adjusted.unbeaten, opponentOverall.adjusted.unbeaten * 0.75);
+
+  const directionalSignals = intelligence.signals
+    .filter((item) => item.compatible && item.marketBias === side)
+    .sort((a, b) => b.score - a.score);
+  const oppositeSignals = intelligence.signals
+    .filter((item) => item.compatible && item.marketBias === oppositeSide)
+    .sort((a, b) => b.score - a.score);
+  const strongestDirectional = directionalSignals[0];
+  const strongestOpposite = oppositeSignals[0];
+
+  const favouritePositive = favouriteWins >= 1.75 || favouriteUnbeaten >= 3.2;
+  const opponentNegative = opponentLosses >= 1.75 || opponentNoWin >= 3.2;
+  const directSignal = Boolean(strongestDirectional && strongestDirectional.score >= 50);
+  const htftSupport = favouriteVenue.htft.sample >= 4 && favouriteVenue.htft.leadToWinRate >= 62;
+  const noDrawSupport = favouritePositive
+    && favouriteVenue.adjusted.noDraw >= 3
+    && opponentVenue.adjusted.noDraw >= 3;
+  const confirmations = [favouritePositive, opponentNegative, directSignal, htftSupport, noDrawSupport]
+    .filter(Boolean).length;
+  const coreAgreement = (favouritePositive && opponentNegative)
+    || (directSignal && (favouritePositive || opponentNegative));
+
+  const oppositeDominates = Boolean(strongestOpposite
+    && strongestOpposite.score >= Math.max(65, (strongestDirectional?.score ?? 0) + 8));
+  const hardContradiction = favouriteLosses >= 1.8
+    || favouriteNoWin >= 2.8
+    || opponentWins >= 1.8
+    || opponentUnbeaten >= 3.8
+    || oppositeDominates;
+
+  if (!coreAgreement
+    || confirmations < 2
+    || hardContradiction
+    || intelligence.home.sample < 4
+    || intelligence.away.sample < 4
+    || intelligence.compatibility < 55
+    || intelligence.contradictionPenalty > 22) {
+    return null;
+  }
+
+  const historicalMatches = allHistoricalMatches.filter((match) => match.date < fixture.date && openingFair(match));
+  const neighbors = provisionalHistoricalNeighbors(historicalMatches, fixture, market);
+  const dataQuality = fixture.dataQuality ?? 60;
+  if (neighbors.sample < 120
+    || neighbors.hitRate < 0.56
+    || neighbors.averageDistance > 0.16
+    || dataQuality < 75) {
+    return null;
+  }
+
+  const oddsStrength = clamp((1.60 - selectedOdd) / 0.41, 0, 1);
+  const aresScore = clamp(
+    10
+    + oddsStrength * 10
+    + clamp(favouriteWins / 3, 0, 1) * 18
+    + clamp(favouriteUnbeaten / 5, 0, 1) * 13
+    + clamp(opponentLosses / 3, 0, 1) * 18
+    + clamp(opponentNoWin / 5, 0, 1) * 13
+    + clamp((strongestDirectional?.score ?? 0) / 100, 0, 1) * 10
+    + (htftSupport ? clamp(favouriteVenue.htft.leadToWinRate / 100, 0, 1) * 6 : 0)
+    + selectedFair * 7,
+    0,
+    100
+  );
+  if (aresScore < 70) return null;
+
+  const similarity = clamp(1 - neighbors.averageDistance / 0.22);
+  const probability = clamp(
+    selectedFair * 0.35
+    + neighbors.hitRate * 0.25
+    + (aresScore / 100) * 0.40,
+    0.05,
+    0.92
+  );
+  const confidence = clamp(
+    18
+    + aresScore * 0.45
+    + neighbors.hitRate * 24
+    + similarity * 12,
+    0,
+    88
+  );
+  if (confidence < 72) return null;
+
+  const team = side === 'home' ? fixture.homeTeam : fixture.awayTeam;
+  const opponent = side === 'home' ? fixture.awayTeam : fixture.homeTeam;
+  const selection = `${team} to win`;
+  const fairPercent = round(selectedFair * 100);
+  const hitPercent = round(neighbors.hitRate * 100);
+  const patternFit = round(similarity * 100);
+  const leagueHistory = historicalMatches.filter((match) => sameLeague(match.leagueName, fixture.leagueName)).length;
+  const homeHistory = countTeamHistory(historicalMatches, fixture.homeTeam);
+  const awayHistory = countTeamHistory(historicalMatches, fixture.awayTeam);
+
+  const engines: EngineSignal[] = [
+    {
+      key: 'chronos',
+      name: 'Historical odds pattern',
+      score: hitPercent,
+      pass: neighbors.sample >= 120 && neighbors.hitRate >= 0.56,
+      note: `${neighbors.sample} closest historical 1X2 price profiles won this side ${hitPercent}% of the time.`
+    },
+    {
+      key: 'athena',
+      name: 'Ares streak confrontation',
+      score: round(aresScore),
+      pass: coreAgreement && confirmations >= 2 && intelligence.compatibility >= 55,
+      note: `${confirmations} streak confirmations support ${team}, led by ${strongestDirectional?.label ?? 'favorite-versus-opponent agreement'}.`
+    },
+    {
+      key: 'zeus',
+      name: 'Favorite price strength',
+      score: round(clamp((selectedFair - 0.50) * 260 + similarity * 45, 0, 100)),
+      pass: selectedFair >= 0.58 && selectedOdd < 1.60 && similarity >= 0.27,
+      note: `${team} are the unique favorite at ${selectedOdd.toFixed(2)}, with about ${fairPercent}% fair market probability and a ${patternFit}% price-pattern fit.`
+    },
+    {
+      key: 'leonidas',
+      name: 'Ares contradiction gate',
+      score: round(clamp(100 - intelligence.contradictionPenalty * 2.2 + dataQuality * 0.12, 0, 100)),
+      pass: !hardContradiction && intelligence.contradictionPenalty <= 22 && dataQuality >= 75,
+      note: `No stronger opposite win or unbeaten streak survived the rejection gate.`
+    }
+  ];
+  if (engines.some((engine) => !engine.pass)) return null;
+
+  const explanation = [
+    `${team} are the clear 1X2 favorite at ${selectedOdd.toFixed(2)}, inside Ares's 1.19-1.59 win range.`,
+    `${team} bring ${favouriteVenue.streaks.wins} venue wins and ${favouriteVenue.streaks.unbeaten} venue matches unbeaten.`,
+    `${opponent} bring ${opponentVenue.streaks.losses} venue losses and ${opponentVenue.streaks.noWin} venue matches without a win.`,
+    strongestDirectional?.note ?? `${confirmations} independent streak checks point toward ${team}.`,
+    `${neighbors.sample} similar historical 1X2 price profiles won this side ${hitPercent}% of the time.`,
+    `This is provisional because local league history is still below the full Chronos requirement; it cannot become a Banker.`
+  ];
+
+  return {
+    fixtureId: fixture.id,
+    engineVersion: ENGINE_VERSION,
+    runAt: new Date().toISOString(),
+    date: fixture.date,
+    kickoff: fixture.kickoff,
+    leagueCode: fixture.leagueCode,
+    leagueName: fixture.leagueName,
+    country: fixture.country,
+    homeTeam: fixture.homeTeam,
+    awayTeam: fixture.awayTeam,
+    marketKey: market,
+    marketLabel: side === 'home' ? 'Home win' : 'Away win',
+    selection,
+    odds: round(selectedOdd, 2),
+    upgraded: false,
+    probability: round(probability * 100),
+    confidence: round(confidence),
+    edge: 0,
+    sample: neighbors.sample,
+    banker: false,
+    tier: 'provisional',
+    qualification: 'ARES_STREAK_FAVOURITE',
+    risk: 'Medium',
+    explanation,
+    summary: `${team} were identified by Ares as a sub-1.60 favorite because the favorite's positive streak and the opponent's negative streak agree with the 1X2 price.`,
+    evidence: {
+      tier: 'provisional',
+      historicalHitRate: hitPercent,
+      marketFairProbability: fairPercent,
+      oddsPatternFit: patternFit,
+      marketEdgeAvailable: false,
+      averageOddsDistance: round(neighbors.averageDistance, 3),
+      localLeagueMatches: leagueHistory,
+      homeTeamHistory: homeHistory,
+      awayTeamHistory: awayHistory,
+      fixtureProvider: fixture.provider ?? 'unknown',
+      oddsSource: fixture.oddsSource ?? fixture.provider ?? 'unknown',
+      dataQuality,
+      lowOddsUpgrade: false,
+      confrontationCompatibility: intelligence.compatibility,
+      confrontationSignal: strongestDirectional?.label ?? 'Favorite streak agreement',
+      homeUnbeatenStreak: intelligence.home.streaks.unbeaten,
+      awayUnbeatenStreak: intelligence.away.streaks.unbeaten,
+      homeNoWinStreak: intelligence.home.streaks.noWin,
+      awayNoWinStreak: intelligence.away.streaks.noWin,
+      homeOver25Streak: intelligence.home.streaks.over25,
+      awayOver25Streak: intelligence.away.streaks.over25,
+      homeUnder25Streak: intelligence.home.streaks.under25,
+      awayUnder25Streak: intelligence.away.streaks.under25,
+      homeLeadToWinRate: intelligence.home.htft.leadToWinRate,
+      awayLeadToWinRate: intelligence.away.htft.leadToWinRate,
+      aresFavourite: true,
+      aresScore: round(aresScore),
+      aresConfirmations: confirmations,
+      aresFavouriteTeam: team,
+      aresFavouriteSide: side,
+      aresFavouriteOdds: round(selectedOdd, 2),
+      aresDirectionalSignal: strongestDirectional?.label ?? 'Favorite streak agreement',
+      aresFavouriteWinStreak: favouriteVenue.streaks.wins,
+      aresFavouriteUnbeatenStreak: favouriteVenue.streaks.unbeaten,
+      aresOpponentLossStreak: opponentVenue.streaks.losses,
+      aresOpponentNoWinStreak: opponentVenue.streaks.noWin
+    },
+    engines,
+    settledStatus: 'pending'
+  };
 }
 
 function analyzeProvisionalFixture(fixture: UpcomingFixture, allHistoricalMatches: NormalizedMatch[]): PredictionRecord | null {
@@ -1126,7 +1525,9 @@ export function analyzeFixtureBattle(
   externalStreakSnapshots: TeamStreakSnapshot[] = []
 ): FixtureBattleResult {
   const intelligence = buildFixtureStreakIntelligence(fixture, allHistoricalMatches, externalStreakSnapshots);
-  const prediction = analyzeFullFixture(fixture, allHistoricalMatches, intelligence) ?? analyzeProvisionalFixture(fixture, allHistoricalMatches);
+  const prediction = analyzeFullFixture(fixture, allHistoricalMatches, intelligence)
+    ?? analyzeProvisionalAresFixture(fixture, allHistoricalMatches, intelligence)
+    ?? analyzeProvisionalFixture(fixture, allHistoricalMatches);
   const snapshots = [intelligence.home, intelligence.away, intelligence.homeOverall, intelligence.awayOverall];
   const confrontation = toConfrontationRecord(fixture, ENGINE_VERSION, intelligence);
   return {

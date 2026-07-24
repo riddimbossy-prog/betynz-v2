@@ -68,6 +68,9 @@ export type Prediction = {
 export type PredictionDashboard = {
   source: 'supabase' | 'demo' | 'offline';
   generatedAt: string;
+  engineVersion: string;
+  currentEngineReady: boolean;
+  rebuilding: boolean;
   window: { from: string; to: string; days: string[] };
   metrics: {
     fixtures: number;
@@ -80,10 +83,12 @@ export type PredictionDashboard = {
     lowOddsUpgrades: number;
     pricedFixtures: number;
     zeusAutoPicks: number;
+    streakFavorites: number;
   };
   bankers: Prediction[];
   predictions: Prediction[];
   zeusAutoPicks: Prediction[];
+  streakFavorites: Prediction[];
   radarFixtures: UpcomingFixture[];
 };
 
