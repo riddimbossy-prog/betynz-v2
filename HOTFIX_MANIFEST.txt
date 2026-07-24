@@ -1,0 +1,26 @@
+BETYNZ v3.0.1 OLYMPIAN PIPELINE HOTFIX
+
+Core additions
+- apps/api/src/pipeline-runtime.ts
+- apps/api/src/pipeline-state.ts
+- POST /api/v1/predictions/refresh
+- GET /api/v1/admin/pipeline-diagnostics (x-admin-token required)
+- Startup and daily single-flight rebuild scheduling
+- API-Football primary provider with coverage-aware premium Odds API fallback
+- Chronos/Athena/Ares publication into god_picks
+- Zeus banker-only odds gate: 1.00 < odds < 1.60
+- Selected-day empty god hiding
+- PWA cache bump: betynz-shell-v3-0-1
+
+Required Supabase migrations
+1. supabase/migrations/007_olympian_roles.sql
+2. supabase/migrations/008_pipeline_hotfix.sql
+
+Validation
+- 17/17 static hotfix checks passed
+- Strict focused Zeus type check passed
+- Strict isolated pipeline runtime type check passed
+- 11 changed TS/TSX files transpiled successfully
+- Package JSON and Render YAML validation passed
+
+See README.md, CHANGELOG_V3_0_1.md, docs/UPGRADE_TO_V3_0_1.md, and TEST_REPORT_V3_0_1.md.

@@ -12,11 +12,12 @@ import { ARES_ENGINE_VERSION } from './ares-service.js';
 import { CHRONOS_ENGINE_VERSION } from './chronos-service.js';
 import { OLYMPIAN_ENGINE_VERSION, ZEUS_MAX_ODDS_EXCLUSIVE } from './god-picks.js';
 import { getAthenaShadowDashboard } from './athena-service.js';
-import { getPredictionDashboard, predictionWindow, rebuildPredictions, syncUpcomingPredictions } from './prediction-service.js';
+import { getPredictionDashboard, predictionWindow, rebuildPredictions } from './prediction-service.js';
 import { providerConfiguration } from './fixture-provider.js';
 import { fetchBetExplorerFixtures, parseBetExplorerHtmlDetailed } from './betexplorer.js';
 import { parseBetExplorerStreakHtml } from './betexplorer-streaks.js';
 import { enrichHistoricalMatchesWithOddsApi } from './odds-api.js';
+import { pipelineDiagnostics, requestPipelineRebuild, startAutomaticPipeline } from './pipeline-runtime.js';
 
 const app = express();
 const port = Number(process.env.PORT || 8787);
@@ -108,6 +109,24 @@ app.get('/api/v1/predictions', async (req: express.Request, res: express.Respons
   } catch (error) { next(error); }
 });
 
+app.post('/api/v1/predictions/refresh', async (_req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    const rebuild = await requestPipelineRebuild('public-refresh');
+    const dashboard = await getPredictionDashboard();
+    res.status(rebuild.coolingDown ? 200 : 201).json({
+      rebuild: {
+        accepted: rebuild.accepted,
+        joined: rebuild.joined,
+        coolingDown: rebuild.coolingDown,
+        retryAfterSeconds: rebuild.retryAfterSeconds,
+        status: rebuild.run.status,
+        completedAt: rebuild.run.completedAt
+      },
+      dashboard
+    });
+  } catch (error) { next(error); }
+});
+
 app.get('/api/v1/gods/:god', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   try {
     const god = z.enum(['zeus', 'chronos', 'athena', 'ares']).parse(req.params.god);
@@ -171,6 +190,14 @@ function authorizeAdmin(req: express.Request, res: express.Response) {
   return true;
 }
 
+
+app.get('/api/v1/admin/pipeline-diagnostics', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    if (!authorizeAdmin(req, res)) return;
+    res.setHeader('Cache-Control', 'no-store, private');
+    res.json(pipelineDiagnostics());
+  } catch (error) { next(error); }
+});
 
 app.get('/api/v1/admin/athena-shadow', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   try {
@@ -381,7 +408,8 @@ app.post('/api/v1/admin/rebuild-predictions', async (req: express.Request, res: 
 app.post('/api/v1/admin/sync-upcoming', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   try {
     if (!authorizeAdmin(req, res)) return;
-    res.json(await syncUpcomingPredictions());
+    const rebuild = await requestPipelineRebuild('admin-sync', true);
+    res.status(rebuild.run.status === 'failed' ? 502 : 200).json(rebuild);
   } catch (error) { next(error); }
 });
 
@@ -391,4 +419,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
   res.status(400).json({ error: message });
 });
 
-app.listen(port, '0.0.0.0', () => console.log(`Betynz API listening on http://localhost:${port}`));
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Betynz API listening on http://localhost:${port}`);
+  startAutomaticPipeline();
+});

@@ -15,7 +15,7 @@ import {
   X,
   Zap
 } from 'lucide-react';
-import { loadPredictions } from './api';
+import { loadPredictions, rebuildAndLoadPredictions } from './api';
 import type { GodKey, GodPublicPick, PredictionDashboard } from './types';
 
 type BoardPick = GodPublicPick & { id: string };
@@ -31,7 +31,7 @@ const GOD_META: Record<GodKey, { label: string; mark: string }> = {
 const emptyPredictions: PredictionDashboard = {
   source: 'offline',
   generatedAt: new Date().toISOString(),
-  engineVersion: 'olympian-roles-3.0.0',
+  engineVersion: 'olympian-roles-3.0.1',
   currentEngineReady: false,
   rebuilding: false,
   window: { from: '', to: '', days: [] },
@@ -118,14 +118,14 @@ export default function App() {
   const [loadError, setLoadError] = useState('');
 
   const picksByGod = useMemo<Record<GodKey, BoardPick[]>>(() => ({
-    zeus: (data.zeusAutoPicks || []).filter((pick) => pick.odds == null || pick.odds < 1.60).map(toBoardPick),
+    zeus: (data.zeusAutoPicks || []).filter((pick) => typeof pick.odds === 'number' && pick.odds > 1 && pick.odds < 1.60).map(toBoardPick),
     chronos: (data.chronosPicks || []).map(toBoardPick),
     athena: (data.athenaPicks || []).map(toBoardPick),
     ares: (data.aresPicks || []).map(toBoardPick)
   }), [data]);
 
   const allPicks = useMemo(() => GOD_ORDER.flatMap((god) => picksByGod[god]), [picksByGod]);
-  const availableGods = useMemo(() => GOD_ORDER.filter((god) => picksByGod[god].length > 0), [picksByGod]);
+  const availableGods = useMemo(() => GOD_ORDER.filter((god) => picksByGod[god].some((pick) => pick.date === selectedDate)), [picksByGod, selectedDate]);
 
   const applyIncoming = (incoming: PredictionDashboard) => {
     setData(incoming);
@@ -140,14 +140,23 @@ export default function App() {
     setLoadError('');
   };
 
-  const refreshPicks = async () => {
+  const loadPicks = async () => {
     setLoading(true);
     try { applyIncoming(await loadPredictions()); }
     catch { setLoadError('The picks feed is unavailable right now.'); }
     finally { setLoading(false); }
   };
 
-  useEffect(() => { void refreshPicks(); }, []);
+  const refreshPicks = async () => {
+    setLoading(true);
+    try {
+      const incoming = await rebuildAndLoadPredictions();
+      applyIncoming(incoming.dashboard);
+    } catch { setLoadError('The rebuild could not be completed right now.'); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { void loadPicks(); }, []);
   useEffect(() => {
     const handler = (event: Event) => { event.preventDefault(); setInstallPrompt(event as BeforeInstallPromptEvent); };
     window.addEventListener('beforeinstallprompt', handler);
@@ -155,7 +164,7 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (!data.rebuilding) return;
-    const timer = window.setTimeout(() => { void refreshPicks(); }, 8000);
+    const timer = window.setTimeout(() => { void loadPicks(); }, 8000);
     return () => window.clearTimeout(timer);
   }, [data.rebuilding]);
   useEffect(() => {
@@ -198,7 +207,7 @@ export default function App() {
       <main id="top">
         <section className="hero compact-hero">
           <div className="hero-copy">
-            <span className="eyebrow"><Sparkles size={14} /> OLYMPIAN PICKS 3.0</span>
+            <span className="eyebrow"><Sparkles size={14} /> OLYMPIAN PICKS 3.0.1</span>
             <h1>Only qualified picks.<br /><span>Nothing forced.</span></h1>
             <p>Chronos, Athena and Ares publish their picks. Zeus posts only approved bankers below 1.60 odds.</p>
             <div className="trust-row">
@@ -210,7 +219,7 @@ export default function App() {
           <div className="hero-panel clean-hero-panel">
             <div className="hero-orbit"><span>PICKS</span><strong>{selectedDayCount}</strong><small>{selectedLabel.short} across available gods</small></div>
             <div className="hero-metric-grid">
-              {availableGods.map((god) => <span key={god}><small>{GOD_META[god].label}</small><strong>{picksByGod[god].length}</strong></span>)}
+              {availableGods.map((god) => <span key={god}><small>{GOD_META[god].label}</small><strong>{picksByGod[god].filter((pick) => pick.date === selectedDate).length}</strong></span>)}
               <span><small>Leagues</small><strong>{data.metrics.pickLeagues}</strong></span>
             </div>
           </div>
@@ -236,7 +245,7 @@ export default function App() {
             <div className="god-tabs" role="tablist" aria-label="Available god picks">
               {availableGods.map((god) => (
                 <button key={god} role="tab" aria-selected={activeGod === god} className={activeGod === god ? 'active' : ''} onClick={() => setActiveGod(god)}>
-                  <span>{GOD_META[god].mark}</span><strong>{GOD_META[god].label}</strong><small>{picksByGod[god].length}</small>
+                  <span>{GOD_META[god].mark}</span><strong>{GOD_META[god].label}</strong><small>{picksByGod[god].filter((pick) => pick.date === selectedDate).length}</small>
                 </button>
               ))}
             </div>

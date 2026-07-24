@@ -699,8 +699,7 @@ export async function replaceGodPicks(
     .lte('match_date', to);
   if (deleteError) {
     if (isMissingOptionalIntelligenceTable(deleteError)) {
-      warnOptionalIntelligenceFallback('god_picks', deleteError);
-      return 0;
+      throw new Error('The god_picks table is unavailable. Run Supabase migrations 007_olympian_roles.sql and 008_pipeline_hotfix.sql before rebuilding.');
     }
     throw deleteError;
   }
@@ -732,8 +731,7 @@ export async function replaceGodPicks(
     });
     if (error) {
       if (isMissingOptionalIntelligenceTable(error)) {
-        warnOptionalIntelligenceFallback('god_picks', error);
-        return 0;
+        throw new Error('The god_picks table is unavailable. Run Supabase migrations 007_olympian_roles.sql and 008_pipeline_hotfix.sql before rebuilding.');
       }
       throw error;
     }

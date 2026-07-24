@@ -1,69 +1,84 @@
-# Betynz v3.0.0 — Olympian Engine Roles
+# Betynz v3.0.1 — Olympian Pipeline Hotfix
 
-This build gives each Betynz god one official responsibility and makes Zeus the final supervisor.
+This hotfix turns the v3 Olympian roles into an automatic, observable publishing pipeline.
 
-## Engine roles
+## Official engine flow
 
-- **Chronos** matches upcoming fixtures against historical odds, results and successful historical profiles.
-- **Athena** runs the frozen HT/FT transition engine: lead protection, comebacks, draw transitions, late separation and swing routes.
-- **Ares** compares compatible streaks and value profiles: unbeaten vs winless, winning vs losing, and strong Over/Under 2.5 streak matchups.
-- **Zeus** collects banker-grade picks from Chronos, Athena and Ares, rejects conflicts and duplicates, and publishes only selections with valid odds **strictly below 1.60**.
+1. **API-Football** supplies the six-day fixture board and available odds.
+2. The **premium Odds API** activates as fallback when API-Football has insufficient 1X2 or O/U 2.5 coverage, or returns no fixtures.
+3. **Chronos**, **Athena**, and **Ares** independently build qualified picks.
+4. Their public picks are written to Supabase `god_picks`.
+5. **Zeus** aggregates banker-grade inputs, rejects conflicts, and publishes only picks with a valid decimal price strictly greater than `1.00` and strictly below `1.60`.
 
-## Public board
+## Automatic rebuilds
 
-- Zeus, Chronos, Athena and Ares each have their own public picks.
-- A god with no picks anywhere in the active board window is hidden.
-- A visible god with no pick on the chosen date displays only **No picks for today.**
-- Public cards show only fixture, kickoff, selection, odds, banker badge and one short stats line.
-- Formulas, thresholds, explanations and trade-secret logic stay off the public board.
+The API process now uses a single-flight pipeline runner. Overlapping rebuilds join the active run instead of spending provider quota twice.
+
+- Startup rebuild: enabled by default.
+- Daily rebuild: `03:15` in `PREDICTION_TIMEZONE` by default.
+- Public Refresh: `POST /api/v1/predictions/refresh` performs a real provider sync and rebuild.
+- Public Refresh cooldown: five minutes by default.
+- Admin sync: `POST /api/v1/admin/sync-upcoming` uses the same controlled pipeline.
+
+```text
+PIPELINE_STARTUP_REBUILD_ENABLED=true
+PIPELINE_DAILY_REBUILD_ENABLED=true
+PIPELINE_DAILY_HOUR=3
+PIPELINE_DAILY_MINUTE=15
+PIPELINE_PUBLIC_REFRESH_COOLDOWN_MS=300000
+```
+
+## Private diagnostics
+
+`GET /api/v1/admin/pipeline-diagnostics`
+
+Send the existing admin token in the `x-admin-token` header. The response is private/no-store and includes:
+
+- active and recent rebuild runs;
+- trigger, status, duration, and safe error message;
+- API-Football fixture and coverage counts;
+- Odds API fallback trigger reasons and usage;
+- Chronos, Athena, Ares, Zeus, and total `god_picks` publication counts;
+- schedule configuration.
+
+No API keys or Supabase credentials are returned.
+
+## Public board behavior
+
+- God tabs are calculated for the selected date.
+- A god with zero picks on that date is hidden.
+- Zeus picks are guarded again in the frontend with the strict `< 1.60` rule.
+- The PWA cache key is bumped to `betynz-shell-v3-0-1` so installed apps receive the hotfix.
 
 ## Required Supabase migrations
 
-Run migrations in numerical order. The new v3.0 migration is:
+Run these in numerical order:
 
 ```text
 supabase/migrations/007_olympian_roles.sql
+supabase/migrations/008_pipeline_hotfix.sql
 ```
 
-It creates the `god_picks` table used by the four public engines.
+Migration `007` creates `god_picks`. Migration `008` allows unmatched premium Odds API fallback fixtures to be stored with provider `odds-api`.
 
 ## Required Render secrets
 
 ```text
 SUPABASE_URL
 SUPABASE_SERVICE_ROLE_KEY
+ADMIN_IMPORT_TOKEN
+API_FOOTBALL_KEY
 ODDS_API_KEY
 ```
 
-Keep `ODDS_API_KEY` in Render only. Never expose it through a `VITE_` frontend variable or commit the real key to GitHub.
-
-## Engine switches
-
-```text
-CHRONOS_ENGINE_ENABLED=true
-ATHENA_ENGINE_ENABLED=true
-ARES_ENGINE_ENABLED=true
-ZEUS_ENGINE_ENABLED=true
-CHRONOS_PUBLIC_ENABLED=true
-ATHENA_PUBLIC_ENABLED=true
-ARES_PUBLIC_ENABLED=true
-ZEUS_PUBLIC_ENABLED=true
-```
-
-The Zeus odds ceiling is hard-locked in the backend at `< 1.60`.
-
-## Deployment
-
-1. Run migration `007_olympian_roles.sql` in Supabase.
-2. Replace the current repository contents with this package.
-3. Commit and push through GitHub Desktop.
-4. Render rebuilds the API.
-5. Run the existing prediction sync workflow or call the protected rebuild endpoint.
+The included `deploy/render.yaml` sets API-Football as primary, enables the premium Odds API fallback, and enables startup/daily rebuilding.
 
 ## Validation
 
-- New Chronos historical service: type-checked and synthetic smoke-tested.
-- New Ares streak/value service: type-checked and synthetic smoke-tested.
-- Zeus consensus, conflict rejection, exact 1.60 rejection and Athena market translation: tested.
-- Public React board: targeted TypeScript check passed.
-- Static package verification: `npm run test:v3`.
+```text
+npm run test:v3
+npm run test:olympian
+npm run build
+```
+
+The package also includes `TEST_REPORT_V3_0_1.md` with the checks completed in the build environment.

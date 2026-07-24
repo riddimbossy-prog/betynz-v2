@@ -27,6 +27,10 @@ services:
         value: 80
       - key: ODDS_API_FALLBACK_MIN_EXTENDED_FIXTURES
         value: 30
+      - key: ODDS_API_FALLBACK_MIN_1X2_COVERAGE
+        value: 0.95
+      - key: ODDS_API_FALLBACK_MIN_EXTENDED_COVERAGE
+        value: 0.60
       - key: ODDS_API_REGIONS
         value: eu,uk
       - key: ODDS_API_MARKETS
@@ -42,9 +46,9 @@ services:
       - key: API_FOOTBALL_MAX_ODDS_PAGES
         value: 50
       - key: FIXTURE_PROVIDER
-        value: betexplorer
+        value: api-football
       - key: BETEXPLORER_ENABLED
-        value: true
+        value: false
       - key: BETEXPLORER_BASE_URL
         value: https://www.betexplorer.com
       - key: BETEXPLORER_FIXTURE_URL_TEMPLATE
@@ -65,6 +69,16 @@ services:
         value: 6
       - key: PREDICTION_TIMEZONE
         value: Africa/Accra
+      - key: PIPELINE_STARTUP_REBUILD_ENABLED
+        value: true
+      - key: PIPELINE_DAILY_REBUILD_ENABLED
+        value: true
+      - key: PIPELINE_DAILY_HOUR
+        value: 3
+      - key: PIPELINE_DAILY_MINUTE
+        value: 15
+      - key: PIPELINE_PUBLIC_REFRESH_COOLDOWN_MS
+        value: 300000
       - key: ATHENA_SHADOW_ENABLED
         value: true
       - key: ATHENA_PUBLIC_ENABLED

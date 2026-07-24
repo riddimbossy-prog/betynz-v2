@@ -28,10 +28,7 @@ import {
   upsertUpcomingFixtures
 } from './store.js';
 import type { GodKey, GodPublicPick, PredictionDashboard } from './forecast-types.js';
-
-let lazyRebuildPromise: Promise<void> | null = null;
-let lastLazyRebuildAttempt = 0;
-const LAZY_REBUILD_COOLDOWN_MS = 10 * 60 * 1000;
+import { isPipelineRunning } from './pipeline-state.js';
 
 function dateInTimeZone(timeZone = process.env.PREDICTION_TIMEZONE || 'Africa/Accra') {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -105,7 +102,7 @@ export async function rebuildPredictions(from?: string, to?: string) {
   const godPicks = [...chronosPicks, ...athenaPicks, ...aresPicks, ...zeusAutoPicks];
 
   await clearPredictionsForWindow(start, end, ENGINE_VERSION);
-  await Promise.all([
+  const [, , , , , godPicksPublished] = await Promise.all([
     upsertPredictions(predictions),
     replaceRejectedBattles(start, end, ENGINE_VERSION, rejections),
     upsertStreakSnapshots(snapshots),
@@ -135,7 +132,8 @@ export async function rebuildPredictions(from?: string, to?: string) {
     athenaShadowPicks: athenaPicks.length,
     athenaShadowBankers: athenaRuns.filter((run) => run.banker).length,
     aresPicks: aresPicks.length,
-    zeusAutoPicks: zeusAutoPicks.length
+    zeusAutoPicks: zeusAutoPicks.length,
+    godPicksPublished
   };
 }
 
@@ -163,15 +161,6 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
 
   const hasCurrentEngineRows = allPredictions.some((prediction) => prediction.engineVersion === ENGINE_VERSION);
   const hasCurrentGodRows = storedGodPicks.length > 0;
-  const needsCurrentEngineRows = sourceName() === 'supabase' && fixtures.length > 0 && (!hasCurrentEngineRows || !hasCurrentGodRows);
-
-  if (needsCurrentEngineRows && !lazyRebuildPromise && Date.now() - lastLazyRebuildAttempt >= LAZY_REBUILD_COOLDOWN_MS) {
-    lastLazyRebuildAttempt = Date.now();
-    lazyRebuildPromise = rebuildPredictions(start, end)
-      .then(() => undefined)
-      .catch((error) => console.error('[Betynz] Automatic Olympian rebuild failed:', error))
-      .finally(() => { lazyRebuildPromise = null; });
-  }
 
   const currentEnginePredictions = allPredictions.filter((prediction) => prediction.engineVersion === ENGINE_VERSION);
   const fallbackEngineVersion = currentEnginePredictions.length === 0
@@ -207,7 +196,7 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
     generatedAt: new Date().toISOString(),
     engineVersion: OLYMPIAN_ENGINE_VERSION,
     currentEngineReady: hasCurrentEngineRows && hasCurrentGodRows,
-    rebuilding: Boolean(lazyRebuildPromise),
+    rebuilding: isPipelineRunning(),
     window: { from: start, to: end, days },
     metrics: {
       fixtures: fixtures.length,

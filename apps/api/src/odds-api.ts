@@ -242,6 +242,8 @@ export function oddsApiConfiguration() {
     baseUrl: BASE_URL,
     fallbackMinFixtures: Number(process.env.ODDS_API_FALLBACK_MIN_FIXTURES || 80),
     fallbackMinExtendedFixtures: Number(process.env.ODDS_API_FALLBACK_MIN_EXTENDED_FIXTURES || 30),
+    fallbackMin1X2Coverage: Number(process.env.ODDS_API_FALLBACK_MIN_1X2_COVERAGE || 0.95),
+    fallbackMinExtendedCoverage: Number(process.env.ODDS_API_FALLBACK_MIN_EXTENDED_COVERAGE || 0.60),
     sportsConfigured: (process.env.ODDS_API_SPORT_KEYS || '').split(',').filter(Boolean).length,
     lastReport
   };

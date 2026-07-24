@@ -9,7 +9,7 @@ export type ProviderSyncReport = {
   fixtures: number;
   apiFootball: { enabled: boolean; fixtures: number; error?: string };
   betExplorer: BetExplorerSyncReport;
-  oddsApi: { enabled: boolean; usedAsFallback: boolean; fixtures: number; fixturesWith1X2: number; requests: number; error?: string; warnings: string[] };
+  oddsApi: { enabled: boolean; usedAsFallback: boolean; fixtures: number; fixturesWith1X2: number; requests: number; error?: string; warnings: string[]; triggerReasons: string[]; primaryCoverage: number; extendedCoverage: number };
   matchedAcrossProviders: number;
   unmatchedBetExplorer: number;
   unmatchedApiFootball: number;
@@ -19,7 +19,7 @@ export type ProviderSyncReport = {
 let lastReport: ProviderSyncReport | null = null;
 
 function mode(): FixtureProviderMode {
-  const value = String(process.env.FIXTURE_PROVIDER || 'betexplorer').toLowerCase();
+  const value = String(process.env.FIXTURE_PROVIDER || 'api-football').toLowerCase();
   return value === 'betexplorer' || value === 'api-football' ? value : 'hybrid';
 }
 
@@ -237,18 +237,35 @@ export async function fetchMultiLeagueUpcomingFixtures(from: string, to: string)
   const fallbackEnabled = String(process.env.ODDS_API_FALLBACK_ENABLED ?? 'true').toLowerCase() !== 'false';
   const fallbackThreshold = Math.max(1, Number(process.env.ODDS_API_FALLBACK_MIN_FIXTURES || 80));
   const extendedThreshold = Math.max(0, Number(process.env.ODDS_API_FALLBACK_MIN_EXTENDED_FIXTURES || 30));
+  const minimumPrimaryCoverage = Math.max(0, Math.min(1, Number(process.env.ODDS_API_FALLBACK_MIN_1X2_COVERAGE || 0.95)));
+  const minimumExtendedCoverage = Math.max(0, Math.min(1, Number(process.env.ODDS_API_FALLBACK_MIN_EXTENDED_COVERAGE || 0.60)));
   const completePrimary = merged.fixtures.filter((fixture) => fixture.odds.home && fixture.odds.draw && fixture.odds.away).length;
   const completeExtended = merged.fixtures.filter((fixture) => fixture.odds.over25 && fixture.odds.under25).length;
+  const primaryCoverage = merged.fixtures.length ? completePrimary / merged.fixtures.length : 0;
+  const extendedCoverage = merged.fixtures.length ? completeExtended / merged.fixtures.length : 0;
+  const requiredPrimary = Math.min(merged.fixtures.length, fallbackThreshold);
+  const requiredExtended = Math.min(merged.fixtures.length, extendedThreshold);
+  const triggerReasons: string[] = [];
+  if (!merged.fixtures.length) triggerReasons.push('API-Football returned no fixtures.');
+  if (completePrimary < requiredPrimary) triggerReasons.push(`Only ${completePrimary}/${requiredPrimary} required fixtures have complete 1X2 odds.`);
+  if (completeExtended < requiredExtended) triggerReasons.push(`Only ${completeExtended}/${requiredExtended} required fixtures have complete O/U 2.5 odds.`);
+  if (merged.fixtures.length && primaryCoverage < minimumPrimaryCoverage) triggerReasons.push(`1X2 coverage ${(primaryCoverage * 100).toFixed(1)}% is below ${(minimumPrimaryCoverage * 100).toFixed(0)}%.`);
+  if (merged.fixtures.length && extendedCoverage < minimumExtendedCoverage) triggerReasons.push(`O/U 2.5 coverage ${(extendedCoverage * 100).toFixed(1)}% is below ${(minimumExtendedCoverage * 100).toFixed(0)}%.`);
   let oddsApiFixtures: UpcomingFixture[] = [];
   let oddsApiError: string | undefined;
-  let oddsApiReport = { enabled: Boolean(process.env.ODDS_API_KEY?.trim()), usedAsFallback: false, fixtures: 0, fixturesWith1X2: 0, requests: 0, warnings: [] as string[] };
-  if (fallbackEnabled && process.env.ODDS_API_KEY?.trim() && (completePrimary < fallbackThreshold || completeExtended < extendedThreshold)) {
+  let oddsApiReport = {
+    enabled: Boolean(process.env.ODDS_API_KEY?.trim()), usedAsFallback: false, fixtures: 0,
+    fixturesWith1X2: 0, requests: 0, warnings: [] as string[], triggerReasons,
+    primaryCoverage, extendedCoverage
+  };
+  if (fallbackEnabled && process.env.ODDS_API_KEY?.trim() && triggerReasons.length > 0) {
     try {
       const result = await fetchOddsApiFixtures(from, to, true);
       oddsApiFixtures = result.fixtures;
       oddsApiReport = {
         enabled: result.report.enabled, usedAsFallback: true, fixtures: result.report.fixtures,
-        fixturesWith1X2: result.report.fixturesWith1X2, requests: result.report.requests, warnings: result.report.warnings
+        fixturesWith1X2: result.report.fixturesWith1X2, requests: result.report.requests,
+        warnings: result.report.warnings, triggerReasons, primaryCoverage, extendedCoverage
       };
     } catch (error) {
       oddsApiError = error instanceof Error ? error.message : String(error);
