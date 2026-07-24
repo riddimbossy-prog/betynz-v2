@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import demoMatches from '../data/demo-matches.json' with { type: 'json' };
 import type { NormalizedMatch } from './types.js';
-import type { PredictionRecord, RejectedBattle, UpcomingFixture } from './forecast-types.js';
+import type { GodPublicPick, PredictionRecord, RejectedBattle, UpcomingFixture } from './forecast-types.js';
 import type { ConfrontationRecord, TeamStreakSnapshot } from './streak-intelligence.js';
 import type { AthenaShadowRun, AthenaSettlementStatus } from './athena-types.js';
 import { teamKey } from './identity.js';
@@ -12,13 +12,14 @@ const supabase: SupabaseClient | null = url && key ? createClient(url, key, { au
 const demoRejectedBattles: RejectedBattle[] = [];
 const demoStreakSnapshots: TeamStreakSnapshot[] = [];
 const demoAthenaShadowRuns: AthenaShadowRun[] = [];
+const demoGodPicks: GodPublicPick[] = [];
 
 function isMissingOptionalIntelligenceTable(error: unknown) {
   const value = error as { code?: string; message?: string; details?: string; hint?: string } | null;
   const text = `${value?.code ?? ''} ${value?.message ?? ''} ${value?.details ?? ''} ${value?.hint ?? ''}`.toLowerCase();
   return value?.code === '42P01'
     || value?.code === 'PGRST205'
-    || ((text.includes('streak_snapshots') || text.includes('confrontation_records') || text.includes('rejected_battles') || text.includes('athena_shadow_runs') || text.includes('goal_profile'))
+    || ((text.includes('streak_snapshots') || text.includes('confrontation_records') || text.includes('rejected_battles') || text.includes('athena_shadow_runs') || text.includes('god_picks') || text.includes('goal_profile'))
       && (text.includes('does not exist') || text.includes('schema cache') || text.includes('could not find')));
 }
 
@@ -671,6 +672,120 @@ function dbToAthenaShadowRun(row: any): AthenaShadowRun {
     },
     settledStatus: row.settled_status ?? 'pending',
     settledAt: row.settled_at ?? undefined
+  };
+}
+
+
+export async function replaceGodPicks(
+  from: string,
+  to: string,
+  engineVersion: string,
+  picks: GodPublicPick[]
+) {
+  if (!supabase) {
+    for (let index = demoGodPicks.length - 1; index >= 0; index -= 1) {
+      const row = demoGodPicks[index];
+      if (row.engineVersion === engineVersion && row.date >= from && row.date <= to) demoGodPicks.splice(index, 1);
+    }
+    demoGodPicks.push(...picks);
+    return picks.length;
+  }
+
+  const { error: deleteError } = await supabase
+    .from('god_picks')
+    .delete()
+    .eq('engine_version', engineVersion)
+    .gte('match_date', from)
+    .lte('match_date', to);
+  if (deleteError) {
+    if (isMissingOptionalIntelligenceTable(deleteError)) {
+      warnOptionalIntelligenceFallback('god_picks', deleteError);
+      return 0;
+    }
+    throw deleteError;
+  }
+
+  const rows = picks.map((pick) => ({
+    fixture_id: pick.fixtureId,
+    engine_version: pick.engineVersion,
+    god: pick.god,
+    match_date: pick.date,
+    kickoff: pick.kickoff,
+    league_code: pick.leagueCode,
+    league_name: pick.leagueName,
+    country: pick.country,
+    home_team: pick.homeTeam,
+    away_team: pick.awayTeam,
+    selection: pick.selection,
+    market_key: pick.marketKey,
+    score: pick.score,
+    banker: pick.banker,
+    odds: pick.odds ?? null,
+    stats_line: pick.statsLine,
+    source_gods: pick.sourceGods ?? [],
+    settled_status: pick.settledStatus ?? 'pending',
+    updated_at: new Date().toISOString()
+  }));
+  for (let index = 0; index < rows.length; index += 250) {
+    const { error } = await supabase.from('god_picks').upsert(rows.slice(index, index + 250), {
+      onConflict: 'fixture_id,engine_version,god'
+    });
+    if (error) {
+      if (isMissingOptionalIntelligenceTable(error)) {
+        warnOptionalIntelligenceFallback('god_picks', error);
+        return 0;
+      }
+      throw error;
+    }
+  }
+  return rows.length;
+}
+
+export async function listGodPicks(from: string, to: string, engineVersion?: string): Promise<GodPublicPick[]> {
+  if (!supabase) {
+    return demoGodPicks
+      .filter((pick) => pick.date >= from && pick.date <= to && (!engineVersion || pick.engineVersion === engineVersion))
+      .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+  }
+  let query = supabase
+    .from('god_picks')
+    .select('*')
+    .gte('match_date', from)
+    .lte('match_date', to)
+    .order('kickoff', { ascending: true })
+    .limit(5000);
+  if (engineVersion) query = query.eq('engine_version', engineVersion);
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingOptionalIntelligenceTable(error)) {
+      warnOptionalIntelligenceFallback('god_picks', error);
+      return [];
+    }
+    throw error;
+  }
+  return (data ?? []).map(dbToGodPick);
+}
+
+function dbToGodPick(row: any): GodPublicPick {
+  return {
+    fixtureId: row.fixture_id,
+    engineVersion: row.engine_version,
+    god: row.god,
+    date: row.match_date,
+    kickoff: row.kickoff,
+    leagueCode: row.league_code,
+    leagueName: row.league_name,
+    country: row.country ?? '',
+    homeTeam: row.home_team,
+    awayTeam: row.away_team,
+    selection: row.selection,
+    marketKey: row.market_key,
+    score: Number(row.score ?? 0),
+    banker: Boolean(row.banker),
+    odds: row.odds == null ? undefined : Number(row.odds),
+    statsLine: row.stats_line ?? '',
+    sourceGods: Array.isArray(row.source_gods) ? row.source_gods : [],
+    settledStatus: row.settled_status ?? 'pending'
   };
 }
 

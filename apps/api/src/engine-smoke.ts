@@ -34,6 +34,6 @@ const fixture: UpcomingFixture = {
 const prediction = analyzeFixture(fixture, demoMatches as NormalizedMatch[]);
 if (!prediction) throw new Error('Expected the smoke-test fixture to produce a qualified prediction.');
 assert(prediction.odds >= 1.19, 'Published odds must never be below 1.19.');
-assert.equal(prediction.engines.filter((engine) => engine.pass).length, 4, 'Chronos, Athena, Zeus and Leonidas must all approve the smoke selection.');
+assert.equal(prediction.engines.filter((engine) => engine.pass).length, 4, 'Chronos, Ares, Zeus and Leonidas must all approve the smoke selection.');
 assert(prediction.explanation.length >= 3, 'Simple-English statistical reasons are required.');
 console.log(JSON.stringify({ ok: true, selection: prediction.selection, odds: prediction.odds, confidence: prediction.confidence }, null, 2));

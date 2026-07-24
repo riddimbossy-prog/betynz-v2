@@ -1,22 +1,31 @@
-# Betynz v2.9.0 — Public Athena God Picks Board
+# Betynz v3.0.0 — Olympian Engine Roles
 
-This build is based on Betynz v2.8 and promotes the frozen Athena Transition Engine RC1 from background-only testing to the public God Picks board.
+This build gives each Betynz god one official responsibility and makes Zeus the final supervisor.
 
-## Public board changes
+## Engine roles
 
-- Zeus and Athena picks are both displayed.
-- Only gods with at least one available pick appear as tabs.
-- Selecting a god with no pick on the chosen date shows only **No picks for today.**
-- Detailed engine explanations, methodology panels, route logic and the 1.19 notice were removed from the public board.
-- Cards show only fixture, selection, available odds, banker badge and a short statistical line.
-- Empty Bankers, Provisional, Radar and engine-method sections no longer clutter the main board.
+- **Chronos** matches upcoming fixtures against historical odds, results and successful historical profiles.
+- **Athena** runs the frozen HT/FT transition engine: lead protection, comebacks, draw transitions, late separation and swing routes.
+- **Ares** compares compatible streaks and value profiles: unbeaten vs winless, winning vs losing, and strong Over/Under 2.5 streak matchups.
+- **Zeus** collects banker-grade picks from Chronos, Athena and Ares, rejects conflicts and duplicates, and publishes only selections with valid odds **strictly below 1.60**.
 
-## Data fallback
+## Public board
 
-- BetExplorer remains the primary fixture source.
-- When complete 1X2 coverage is below `ODDS_API_FALLBACK_MIN_FIXTURES`, the premium `ODDS_API_KEY` provider automatically adds and enriches fixtures.
-- The Odds API can supply H2H and totals prices.
-- A protected admin endpoint can backfill missing historical odds into already-settled matches in controlled date windows.
+- Zeus, Chronos, Athena and Ares each have their own public picks.
+- A god with no picks anywhere in the active board window is hidden.
+- A visible god with no pick on the chosen date displays only **No picks for today.**
+- Public cards show only fixture, kickoff, selection, odds, banker badge and one short stats line.
+- Formulas, thresholds, explanations and trade-secret logic stay off the public board.
+
+## Required Supabase migrations
+
+Run migrations in numerical order. The new v3.0 migration is:
+
+```text
+supabase/migrations/007_olympian_roles.sql
+```
+
+It creates the `god_picks` table used by the four public engines.
 
 ## Required Render secrets
 
@@ -26,31 +35,35 @@ SUPABASE_SERVICE_ROLE_KEY
 ODDS_API_KEY
 ```
 
-Keep the real Odds API key in Render environment secrets. Never put it in the frontend or commit it to GitHub.
+Keep `ODDS_API_KEY` in Render only. Never expose it through a `VITE_` frontend variable or commit the real key to GitHub.
 
-## First deployment
-
-Run this migration in Supabase if it has not already been applied:
+## Engine switches
 
 ```text
-supabase/migrations/006_athena_transition_shadow.sql
+CHRONOS_ENGINE_ENABLED=true
+ATHENA_ENGINE_ENABLED=true
+ARES_ENGINE_ENABLED=true
+ZEUS_ENGINE_ENABLED=true
+CHRONOS_PUBLIC_ENABLED=true
+ATHENA_PUBLIC_ENABLED=true
+ARES_PUBLIC_ENABLED=true
+ZEUS_PUBLIC_ENABLED=true
 ```
 
-Then deploy the repository. The engine version changed to `zeus-athena-public-2.9.0`, which triggers a clean prediction rebuild.
+The Zeus odds ceiling is hard-locked in the backend at `< 1.60`.
 
-## Historical odds backfill
+## Deployment
 
-Use the protected endpoint only when needed because premium historical requests consume API quota:
+1. Run migration `007_olympian_roles.sql` in Supabase.
+2. Replace the current repository contents with this package.
+3. Commit and push through GitHub Desktop.
+4. Render rebuilds the API.
+5. Run the existing prediction sync workflow or call the protected rebuild endpoint.
 
-```text
-POST /api/v1/admin/backfill-odds-api-history
-x-admin-token: <ADMIN_IMPORT_TOKEN>
-Content-Type: application/json
+## Validation
 
-{
-  "from": "2026-07-01",
-  "to": "2026-07-07"
-}
-```
-
-The default maximum is seven days per request.
+- New Chronos historical service: type-checked and synthetic smoke-tested.
+- New Ares streak/value service: type-checked and synthetic smoke-tested.
+- Zeus consensus, conflict rejection, exact 1.60 rejection and Athena market translation: tested.
+- Public React board: targeted TypeScript check passed.
+- Static package verification: `npm run test:v3`.

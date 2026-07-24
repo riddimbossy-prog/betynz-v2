@@ -1,31 +1,45 @@
 import { fetchMultiLeagueUpcomingFixtures } from './fixture-provider.js';
 import { buildAthenaShadowRun } from './athena-service.js';
 import { ATHENA_ENGINE_VERSION, ATHENA_MARKETS } from './athena-transition.js';
+import { buildAresPick } from './ares-service.js';
+import { buildChronosPick } from './chronos-service.js';
 import { analyzeFixtureBattle, ENGINE_VERSION } from './engine.js';
+import {
+  OLYMPIAN_ENGINE_VERSION,
+  buildAthenaPicks,
+  buildChronosPicks,
+  buildZeusAutoPicks
+} from './god-picks.js';
 import {
   allMatches,
   clearPredictionsForWindow,
+  listAthenaShadowRuns,
+  listGodPicks,
   listPredictions,
   listStreakSnapshots,
   listUpcomingFixtures,
-  listAthenaShadowRuns,
+  replaceAthenaShadowRuns,
+  replaceGodPicks,
+  replaceRejectedBattles,
   sourceName,
   upsertConfrontationRecords,
   upsertPredictions,
   upsertStreakSnapshots,
-  replaceRejectedBattles,
-  replaceAthenaShadowRuns,
   upsertUpcomingFixtures
 } from './store.js';
-import type { AthenaPublicPick, PredictionDashboard, UpcomingFixture } from './forecast-types.js';
-import type { AthenaShadowRun } from './athena-types.js';
+import type { GodKey, GodPublicPick, PredictionDashboard } from './forecast-types.js';
 
 let lazyRebuildPromise: Promise<void> | null = null;
 let lastLazyRebuildAttempt = 0;
 const LAZY_REBUILD_COOLDOWN_MS = 10 * 60 * 1000;
 
 function dateInTimeZone(timeZone = process.env.PREDICTION_TIMEZONE || 'Africa/Accra') {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date());
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day}`;
 }
@@ -36,46 +50,14 @@ function addDays(date: string, days: number) {
   return value.toISOString().slice(0, 10);
 }
 
-function percent(value: unknown) {
-  const number = Number(value);
-  return Number.isFinite(number) ? `${Math.round(number * 100)}%` : null;
+function enabled(name: string, fallback = true) {
+  const value = process.env[name];
+  if (value == null) return fallback;
+  return String(value).toLowerCase() !== 'false';
 }
 
-function athenaStatsLine(run: AthenaShadowRun) {
-  const home = run.metrics?.home;
-  const away = run.metrics?.away;
-  const parts: string[] = [];
-  const homeUnder = percent(home?.under25Rate);
-  const awayUnder = percent(away?.under25Rate);
-  const homeHtDraw = percent(home?.htDrawRate);
-  const awayHtDraw = percent(away?.htDrawRate);
-  if (homeUnder && awayUnder) parts.push(`U2.5 ${homeUnder} / ${awayUnder}`);
-  if (homeHtDraw && awayHtDraw) parts.push(`HT draw ${homeHtDraw} / ${awayHtDraw}`);
-  if (parts.length < 2 && Number.isFinite(Number(home?.averageTotalGoals)) && Number.isFinite(Number(away?.averageTotalGoals))) {
-    parts.push(`Avg goals ${Number(home.averageTotalGoals).toFixed(1)} / ${Number(away.averageTotalGoals).toFixed(1)}`);
-  }
-  return parts.slice(0, 2).join(' · ') || `Athena score ${Math.round(run.score)}%`;
-}
-
-function athenaMarketOdd(run: AthenaShadowRun, fixture?: UpcomingFixture) {
-  if (!fixture) return undefined;
-  const odds = fixture.odds;
-  const map: Record<string, number | undefined> = {
-    HOME_DNB: odds.homeDnb, AWAY_DNB: odds.awayDnb, HOME_OR_DRAW: odds.dc1x, AWAY_OR_DRAW: odds.dcx2,
-    HOME_TEAM_OVER_0_5: odds.homeOver05, AWAY_TEAM_OVER_0_5: odds.awayOver05, OVER_1_5: odds.over15,
-    OVER_2_5: odds.over25, UNDER_2_5: odds.under25, UNDER_3_5: odds.under35, FULL_TIME_DRAW: odds.draw
-  };
-  const value = map[run.marketKey];
-  return value && Number.isFinite(value) ? value : undefined;
-}
-
-function toAthenaPublicPick(run: AthenaShadowRun, fixture?: UpcomingFixture): AthenaPublicPick {
-  return {
-    fixtureId: run.fixtureId, engineVersion: run.engineVersion, date: run.date, kickoff: run.kickoff,
-    leagueCode: run.leagueCode, leagueName: run.leagueName, country: run.country, homeTeam: run.homeTeam, awayTeam: run.awayTeam,
-    selection: run.marketLabel, marketKey: run.marketKey, score: run.score, banker: run.banker, odds: athenaMarketOdd(run, fixture),
-    statsLine: athenaStatsLine(run), settledStatus: run.settledStatus
-  };
+function byGod(rows: GodPublicPick[], god: GodKey) {
+  return rows.filter((pick) => pick.god === god).sort((a, b) => a.kickoff.localeCompare(b.kickoff));
 }
 
 export function predictionWindow(days = Number(process.env.PREDICTION_DAYS || 6)) {
@@ -101,10 +83,26 @@ export async function rebuildPredictions(from?: string, to?: string) {
   const rejections = battles.flatMap((battle) => battle.rejection ? [battle.rejection] : []);
   const snapshots = battles.flatMap((battle) => battle.snapshots);
   const confrontations = battles.flatMap((battle) => battle.confrontation ? [battle.confrontation] : []);
-  const athenaEnabled = String(process.env.ATHENA_SHADOW_ENABLED ?? 'true').toLowerCase() !== 'false';
-  const athenaRuns = athenaEnabled
+
+  const athenaRuns = enabled('ATHENA_ENGINE_ENABLED', true)
     ? fixtures.map((fixture, index) => buildAthenaShadowRun(fixture, historicalMatches, battles[index]?.snapshots ?? []))
     : [];
+
+  const chronosPicks = enabled('CHRONOS_ENGINE_ENABLED', true)
+    ? fixtures
+        .map((fixture) => buildChronosPick(fixture, historicalMatches))
+        .filter((pick): pick is GodPublicPick => Boolean(pick))
+    : [];
+  const athenaPicks = enabled('ATHENA_ENGINE_ENABLED', true) ? buildAthenaPicks(athenaRuns, fixtures) : [];
+  const aresPicks = enabled('ARES_ENGINE_ENABLED', true)
+    ? fixtures
+        .map((fixture) => buildAresPick(fixture, historicalMatches, externalStreakSnapshots))
+        .filter((pick): pick is GodPublicPick => Boolean(pick))
+    : [];
+  const zeusAutoPicks = enabled('ZEUS_ENGINE_ENABLED', true)
+    ? buildZeusAutoPicks([...chronosPicks, ...athenaPicks, ...aresPicks], fixtures)
+    : [];
+  const godPicks = [...chronosPicks, ...athenaPicks, ...aresPicks, ...zeusAutoPicks];
 
   await clearPredictionsForWindow(start, end, ENGINE_VERSION);
   await Promise.all([
@@ -112,7 +110,8 @@ export async function rebuildPredictions(from?: string, to?: string) {
     replaceRejectedBattles(start, end, ENGINE_VERSION, rejections),
     upsertStreakSnapshots(snapshots),
     upsertConfrontationRecords(confrontations),
-    replaceAthenaShadowRuns(start, end, ATHENA_ENGINE_VERSION, athenaRuns)
+    replaceAthenaShadowRuns(start, end, ATHENA_ENGINE_VERSION, athenaRuns),
+    replaceGodPicks(start, end, OLYMPIAN_ENGINE_VERSION, godPicks)
   ]);
 
   return {
@@ -129,9 +128,14 @@ export async function rebuildPredictions(from?: string, to?: string) {
     streakSnapshots: snapshots.length,
     confrontationRecords: confrontations.length,
     externalStreakSnapshots: externalStreakSnapshots.length,
+    chronosPicks: chronosPicks.length,
+    athenaRuns: athenaRuns.length,
+    athenaPicks: athenaPicks.length,
     athenaShadowRuns: athenaRuns.length,
-    athenaShadowPicks: athenaRuns.filter((run) => run.marketKey !== ATHENA_MARKETS.NO_PICK).length,
-    athenaShadowBankers: athenaRuns.filter((run) => run.banker).length
+    athenaShadowPicks: athenaPicks.length,
+    athenaShadowBankers: athenaRuns.filter((run) => run.banker).length,
+    aresPicks: aresPicks.length,
+    zeusAutoPicks: zeusAutoPicks.length
   };
 }
 
@@ -140,52 +144,35 @@ export async function syncUpcomingPredictions() {
   const providerResult = await fetchMultiLeagueUpcomingFixtures(window.from, window.to);
   await upsertUpcomingFixtures(providerResult.fixtures);
   const rebuilt = await rebuildPredictions(window.from, window.to);
-  return {
-    ...rebuilt,
-    window,
-    providers: providerResult.report
-  };
+  return { ...rebuilt, window, providers: providerResult.report };
 }
 
 export async function getPredictionDashboard(from?: string, to?: string): Promise<PredictionDashboard> {
-  const defaultWindow = predictionWindow();
-  const start = from || defaultWindow.from;
-  const end = to || defaultWindow.to;
+  const defaults = predictionWindow();
+  const start = from || defaults.from;
+  const end = to || defaults.to;
   const days: string[] = [];
   for (let cursor = start; cursor <= end && days.length < 10; cursor = addDays(cursor, 1)) days.push(cursor);
-  const [allPredictions, fixtures, athenaShadowRuns] = await Promise.all([
+
+  const [allPredictions, fixtures, athenaShadowRuns, storedGodPicks] = await Promise.all([
     listPredictions(start, end),
     listUpcomingFixtures(start, end),
-    listAthenaShadowRuns(start, end, 5000)
+    listAthenaShadowRuns(start, end, 5000),
+    listGodPicks(start, end, OLYMPIAN_ENGINE_VERSION)
   ]);
 
   const hasCurrentEngineRows = allPredictions.some((prediction) => prediction.engineVersion === ENGINE_VERSION);
-  const needsCurrentEngineRows = sourceName() === 'supabase' && fixtures.length > 0 && !hasCurrentEngineRows;
+  const hasCurrentGodRows = storedGodPicks.length > 0;
+  const needsCurrentEngineRows = sourceName() === 'supabase' && fixtures.length > 0 && (!hasCurrentEngineRows || !hasCurrentGodRows);
 
-  if (needsCurrentEngineRows) {
-    if (!lazyRebuildPromise && Date.now() - lastLazyRebuildAttempt >= LAZY_REBUILD_COOLDOWN_MS) {
-      lastLazyRebuildAttempt = Date.now();
-      lazyRebuildPromise = rebuildPredictions(start, end)
-        .then(() => undefined)
-        .catch((error) => {
-          console.error('[Betynz] Automatic prediction rebuild failed:', error);
-        })
-        .finally(() => {
-          lazyRebuildPromise = null;
-        });
-    }
+  if (needsCurrentEngineRows && !lazyRebuildPromise && Date.now() - lastLazyRebuildAttempt >= LAZY_REBUILD_COOLDOWN_MS) {
+    lastLazyRebuildAttempt = Date.now();
+    lazyRebuildPromise = rebuildPredictions(start, end)
+      .then(() => undefined)
+      .catch((error) => console.error('[Betynz] Automatic Olympian rebuild failed:', error))
+      .finally(() => { lazyRebuildPromise = null; });
   }
-  const radarFixtures = fixtures
-    .filter((fixture) => Boolean(fixture.odds.home && fixture.odds.draw && fixture.odds.away))
-    .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
-  const fixtureById = new Map(fixtures.map((fixture) => [fixture.id, fixture]));
-  const athenaPublicEnabled = String(process.env.ATHENA_PUBLIC_ENABLED ?? 'true').toLowerCase() !== 'false';
-  const athenaPicks = athenaPublicEnabled
-    ? athenaShadowRuns
-        .filter((run) => run.marketKey !== ATHENA_MARKETS.NO_PICK)
-        .map((run) => toAthenaPublicPick(run, fixtureById.get(run.fixtureId)))
-        .sort((a, b) => a.kickoff.localeCompare(b.kickoff))
-    : [];
+
   const currentEnginePredictions = allPredictions.filter((prediction) => prediction.engineVersion === ENGINE_VERSION);
   const fallbackEngineVersion = currentEnginePredictions.length === 0
     ? [...allPredictions].sort((a, b) => b.runAt.localeCompare(a.runAt))[0]?.engineVersion
@@ -194,37 +181,47 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
   const activePredictions = currentEnginePredictions.length > 0
     ? currentEnginePredictions
     : allPredictions.filter((prediction) => prediction.engineVersion === activeEngineVersion);
-  const sorted = activePredictions
-    .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
-  const bankers = [...sorted]
+  const sorted = [...activePredictions].sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+  const bankers = sorted
     .filter((prediction) => prediction.banker && prediction.tier === 'full')
     .sort((a, b) => b.confidence - a.confidence || b.edge - a.edge);
-  const zeusAutoPicks = [...sorted]
-    .sort((a, b) => {
-      const tierDifference = Number(b.tier === 'full') - Number(a.tier === 'full');
-      if (tierDifference) return tierDifference;
-      const bankerDifference = Number(b.banker) - Number(a.banker);
-      if (bankerDifference) return bankerDifference;
-      return b.confidence + b.edge * 0.6 - (a.confidence + a.edge * 0.6) || a.kickoff.localeCompare(b.kickoff);
-    });
+
+  let godPicks = storedGodPicks;
+  if (!godPicks.length && sourceName() === 'demo') {
+    const chronos = buildChronosPicks(sorted);
+    const athena = buildAthenaPicks(athenaShadowRuns, fixtures);
+    godPicks = [...chronos, ...athena, ...buildZeusAutoPicks([...chronos, ...athena], fixtures)];
+  }
+
+  const chronosPicks = enabled('CHRONOS_PUBLIC_ENABLED', true) ? byGod(godPicks, 'chronos') : [];
+  const athenaPicks = enabled('ATHENA_PUBLIC_ENABLED', true) ? byGod(godPicks, 'athena') : [];
+  const aresPicks = enabled('ARES_PUBLIC_ENABLED', true) ? byGod(godPicks, 'ares') : [];
+  const zeusAutoPicks = enabled('ZEUS_PUBLIC_ENABLED', true) ? byGod(godPicks, 'zeus') : [];
+  const publicPicks = [...chronosPicks, ...athenaPicks, ...aresPicks, ...zeusAutoPicks];
+  const radarFixtures = fixtures
+    .filter((fixture) => Boolean(fixture.odds.home && fixture.odds.draw && fixture.odds.away))
+    .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+
   return {
     source: sourceName(),
     generatedAt: new Date().toISOString(),
-    engineVersion: activeEngineVersion,
-    currentEngineReady: currentEnginePredictions.length > 0,
+    engineVersion: OLYMPIAN_ENGINE_VERSION,
+    currentEngineReady: hasCurrentEngineRows && hasCurrentGodRows,
     rebuilding: Boolean(lazyRebuildPromise),
     window: { from: start, to: end, days },
     metrics: {
       fixtures: fixtures.length,
-      picks: sorted.length,
+      picks: publicPicks.length,
       fullPicks: sorted.filter((prediction) => prediction.tier === 'full').length,
       provisionalPicks: sorted.filter((prediction) => prediction.tier === 'provisional').length,
-      bankers: bankers.length,
+      bankers: publicPicks.filter((pick) => pick.banker).length,
       leagues: new Set(fixtures.map((fixture) => `${fixture.country}|${fixture.leagueName}`)).size,
-      pickLeagues: new Set(sorted.map((prediction) => `${prediction.country}|${prediction.leagueName}`)).size,
+      pickLeagues: new Set(publicPicks.map((pick) => `${pick.country}|${pick.leagueName}`)).size,
       lowOddsUpgrades: sorted.filter((prediction) => prediction.upgraded).length,
       pricedFixtures: radarFixtures.length,
       zeusAutoPicks: zeusAutoPicks.length,
+      chronosPublicPicks: chronosPicks.length,
+      aresPublicPicks: aresPicks.length,
       athenaShadowRuns: athenaShadowRuns.length,
       athenaShadowPicks: athenaShadowRuns.filter((run) => run.marketKey !== ATHENA_MARKETS.NO_PICK).length,
       athenaShadowBankers: athenaShadowRuns.filter((run) => run.banker).length,
@@ -233,7 +230,9 @@ export async function getPredictionDashboard(from?: string, to?: string): Promis
     bankers,
     predictions: sorted,
     zeusAutoPicks,
+    chronosPicks,
     athenaPicks,
+    aresPicks,
     radarFixtures
   };
 }

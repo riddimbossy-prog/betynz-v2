@@ -69,6 +69,20 @@ services:
         value: true
       - key: ATHENA_PUBLIC_ENABLED
         value: true
+      - key: CHRONOS_ENGINE_ENABLED
+        value: true
+      - key: ATHENA_ENGINE_ENABLED
+        value: true
+      - key: ARES_ENGINE_ENABLED
+        value: true
+      - key: ZEUS_ENGINE_ENABLED
+        value: true
+      - key: CHRONOS_PUBLIC_ENABLED
+        value: true
+      - key: ARES_PUBLIC_ENABLED
+        value: true
+      - key: ZEUS_PUBLIC_ENABLED
+        value: true
       - key: ATHENA_HISTORY_LIMIT
         value: 24
       - key: ATHENA_MIN_HTFT_SAMPLE

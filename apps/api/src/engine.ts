@@ -3,7 +3,7 @@ import type { EngineSignal, FixtureBattleResult, MarketKey, PredictionRecord, Re
 import { sameLeague, teamKey } from './identity.js';
 import { buildFixtureStreakIntelligence, toConfrontationRecord, type FixtureStreakIntelligence, type TeamStreakSnapshot } from './streak-intelligence.js';
 
-export const ENGINE_VERSION = 'zeus-athena-public-2.9.1';
+export const ENGINE_VERSION = 'olympian-roles-3.0.0';
 
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value));
 const pct = (wins: number, sample: number, fallback = 0.5) => sample ? wins / sample : fallback;
@@ -689,13 +689,13 @@ function evaluateMarket(
   );
 
   const chronosScore = clamp(neighbors.hitRate * 68 + (1 - neighbors.averageDistance) * 32, 0, 100);
-  const athenaScore = clamp(teamConfirmation * 78 + streakIntelligence.compatibility * 0.22, 0, 100);
+  const aresScore = clamp(teamConfirmation * 68 + streakIntelligence.compatibility * 0.32, 0, 100);
   const zeusScore = clamp((probability * 0.58 + clamp(edge + 0.12, 0, 0.24) / 0.24 * 0.30 + streakConfirmation * 0.12) * 100, 0, 100);
   const leonidasScore = clamp(100 - contradiction + dataCompleteness * 8 - streakIntelligence.contradictionPenalty * 0.6, 0, 100);
   const zeusBattleScore = confidence + edge * 70 + zeusScore * 0.12 + streakIntelligence.compatibility * 0.04 - contradiction * 0.08;
   const engines: EngineSignal[] = [
     { key: 'chronos', name: 'Chronos', score: round(chronosScore), pass: neighbors.sample >= 60 && chronosScore >= 66, note: `${neighbors.sample} closest historical odds profiles produced a ${round(neighbors.hitRate * 100)}% hit rate.` },
-    { key: 'athena', name: 'Athena', score: round(athenaScore), pass: athenaScore >= 68 && streakSamplesReady && htftSamplesReady, note: htftSamplesReady ? `Form, venue, O/U 2.5 streaks and HT/FT splits were statistically checked.` : `Streak samples exist, but the HT/FT sample is not yet deep enough.` },
+    { key: 'ares', name: 'Ares', score: round(aresScore), pass: aresScore >= 68 && streakSamplesReady, note: `Venue form and compatible streak confrontations were checked.` },
     { key: 'zeus', name: 'Zeus', score: round(zeusScore), pass: edge >= 0.015 && zeusScore >= 66, note: `Zeus market battle score ${round(zeusBattleScore)} with ${edge >= 0 ? '+' : ''}${round(edge * 100)}% edge.` },
     { key: 'leonidas', name: 'Leonidas', score: round(leonidasScore), pass: contradiction <= 34 && dataCompleteness >= 0.55 && streakIntelligence.contradictionPenalty <= 22, note: contradiction <= 22 ? 'No major statistical or streak conflict survived the rejection gate.' : 'Some signals still conflict.' }
   ];
@@ -967,8 +967,8 @@ function analyzeProvisionalFixture(fixture: UpcomingFixture, allHistoricalMatche
       note: `${neighbors.sample} closest historical 1X2 price profiles won this side ${hitPercent}% of the time.`
     },
     {
-      key: 'athena',
-      name: 'Local team intelligence',
+      key: 'ares',
+      name: 'Streak and value intelligence',
       score: 35,
       pass: false,
       note: `Local league and team history is not deep enough yet, so this pick is provisional and cannot be a Banker.`

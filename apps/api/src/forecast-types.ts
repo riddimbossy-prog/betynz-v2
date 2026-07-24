@@ -68,7 +68,7 @@ export type UpcomingFixture = {
 };
 
 export type EngineSignal = {
-  key: 'chronos' | 'athena' | 'zeus' | 'leonidas';
+  key: 'chronos' | 'athena' | 'ares' | 'zeus' | 'leonidas';
   name: string;
   score: number;
   pass: boolean;
@@ -146,9 +146,12 @@ export type FixtureBattleResult = {
 };
 
 
-export type AthenaPublicPick = {
+export type GodKey = 'chronos' | 'athena' | 'ares' | 'zeus';
+
+export type GodPublicPick = {
   fixtureId: string;
   engineVersion: string;
+  god: GodKey;
   date: string;
   kickoff: string;
   leagueCode: string;
@@ -162,8 +165,11 @@ export type AthenaPublicPick = {
   banker: boolean;
   odds?: number;
   statsLine: string;
+  sourceGods?: Array<Exclude<GodKey, 'zeus'>>;
   settledStatus?: 'pending' | 'won' | 'lost' | 'void';
 };
+
+export type AthenaPublicPick = GodPublicPick;
 
 export type PredictionDashboard = {
   source: 'supabase' | 'demo';
@@ -183,6 +189,8 @@ export type PredictionDashboard = {
     lowOddsUpgrades: number;
     pricedFixtures: number;
     zeusAutoPicks: number;
+    chronosPublicPicks: number;
+    aresPublicPicks: number;
     athenaShadowRuns: number;
     athenaShadowPicks: number;
     athenaShadowBankers: number;
@@ -190,7 +198,9 @@ export type PredictionDashboard = {
   };
   bankers: PredictionRecord[];
   predictions: PredictionRecord[];
-  zeusAutoPicks: PredictionRecord[];
-  athenaPicks: AthenaPublicPick[];
+  zeusAutoPicks: GodPublicPick[];
+  chronosPicks: GodPublicPick[];
+  athenaPicks: GodPublicPick[];
+  aresPicks: GodPublicPick[];
   radarFixtures: UpcomingFixture[];
 };

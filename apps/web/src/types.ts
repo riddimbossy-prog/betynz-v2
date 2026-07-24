@@ -1,4 +1,3 @@
-
 export type UpcomingFixture = {
   id: string;
   provider?: 'api-football' | 'betexplorer' | 'odds-api' | 'hybrid';
@@ -15,16 +14,11 @@ export type UpcomingFixture = {
   venue?: string;
   homeTeam: string;
   awayTeam: string;
-  odds: {
-    home?: number;
-    draw?: number;
-    away?: number;
-    [key: string]: number | undefined;
-  };
+  odds: { home?: number; draw?: number; away?: number; [key: string]: number | undefined };
 };
 
 export type EngineSignal = {
-  key: 'chronos' | 'athena' | 'zeus' | 'leonidas';
+  key: 'chronos' | 'athena' | 'ares' | 'zeus' | 'leonidas';
   name: string;
   score: number;
   pass: boolean;
@@ -65,10 +59,12 @@ export type Prediction = {
   settledStatus?: 'pending' | 'won' | 'lost' | 'void';
 };
 
+export type GodKey = 'zeus' | 'chronos' | 'athena' | 'ares';
 
-export type AthenaPublicPick = {
+export type GodPublicPick = {
   fixtureId: string;
   engineVersion: string;
+  god: GodKey;
   date: string;
   kickoff: string;
   leagueCode: string;
@@ -82,6 +78,7 @@ export type AthenaPublicPick = {
   banker: boolean;
   odds?: number;
   statsLine: string;
+  sourceGods?: Array<'chronos' | 'athena' | 'ares'>;
   settledStatus?: 'pending' | 'won' | 'lost' | 'void';
 };
 
@@ -103,6 +100,8 @@ export type PredictionDashboard = {
     lowOddsUpgrades: number;
     pricedFixtures: number;
     zeusAutoPicks: number;
+    chronosPublicPicks: number;
+    aresPublicPicks: number;
     athenaShadowRuns: number;
     athenaShadowPicks: number;
     athenaShadowBankers: number;
@@ -110,8 +109,10 @@ export type PredictionDashboard = {
   };
   bankers: Prediction[];
   predictions: Prediction[];
-  zeusAutoPicks: Prediction[];
-  athenaPicks: AthenaPublicPick[];
+  zeusAutoPicks: GodPublicPick[];
+  chronosPicks: GodPublicPick[];
+  athenaPicks: GodPublicPick[];
+  aresPicks: GodPublicPick[];
   radarFixtures: UpcomingFixture[];
 };
 
@@ -119,13 +120,5 @@ export type HistoricalDashboard = {
   source: 'supabase' | 'demo';
   lastUpdated: string;
   engineVersion?: string;
-  metrics: {
-    matches: number;
-    leagues: number;
-    patterns: number;
-    validated: number;
-    upcomingFixtures?: number;
-    futurePicks?: number;
-    bankers?: number;
-  };
+  metrics: { matches: number; leagues: number; patterns: number; validated: number; upcomingFixtures?: number; futurePicks?: number; bankers?: number };
 };

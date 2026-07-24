@@ -719,3 +719,8 @@ main { width: min(1380px, calc(100% - 38px)); margin: 0 auto; }
   .minimal-stat-line { align-items: flex-start; flex-direction: column; }
   .clean-footer { padding-bottom: 98px; }
 }
+
+/* Betynz 3.0 Olympian role colors */
+.god-pick-card.chronos { background: linear-gradient(145deg, rgba(28,24,18,.98), rgba(13,15,20,.98)); }
+.god-pick-card.ares { background: linear-gradient(145deg, rgba(34,19,21,.98), rgba(13,15,20,.98)); }
+.god-pick-card.zeus { box-shadow: 0 14px 38px rgba(255,148,64,.09); }

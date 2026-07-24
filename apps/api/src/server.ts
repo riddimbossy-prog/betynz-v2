@@ -8,6 +8,9 @@ import { buildOddsBands } from './patterns.js';
 import { importFootballDataUrl } from './importer.js';
 import { ENGINE_VERSION } from './engine.js';
 import { ATHENA_ENGINE_MODE, ATHENA_ENGINE_VERSION } from './athena-transition.js';
+import { ARES_ENGINE_VERSION } from './ares-service.js';
+import { CHRONOS_ENGINE_VERSION } from './chronos-service.js';
+import { OLYMPIAN_ENGINE_VERSION, ZEUS_MAX_ODDS_EXCLUSIVE } from './god-picks.js';
 import { getAthenaShadowDashboard } from './athena-service.js';
 import { getPredictionDashboard, predictionWindow, rebuildPredictions, syncUpcomingPredictions } from './prediction-service.js';
 import { providerConfiguration } from './fixture-provider.js';
@@ -27,8 +30,9 @@ app.get('/api/v1/health', (_req: express.Request, res: express.Response) => res.
   ok: true,
   service: 'betynz-api',
   source: sourceName(),
-  engineVersion: ENGINE_VERSION,
-  athenaTransition: { version: ATHENA_ENGINE_VERSION, mode: ATHENA_ENGINE_MODE, enabled: String(process.env.ATHENA_SHADOW_ENABLED ?? 'true').toLowerCase() !== 'false', publicEnabled: String(process.env.ATHENA_PUBLIC_ENABLED ?? 'true').toLowerCase() !== 'false' },
+  engineVersion: OLYMPIAN_ENGINE_VERSION,
+  roles: { chronos: CHRONOS_ENGINE_VERSION, athena: ATHENA_ENGINE_VERSION, ares: ARES_ENGINE_VERSION, zeusMaxOddsExclusive: ZEUS_MAX_ODDS_EXCLUSIVE },
+  athenaTransition: { version: ATHENA_ENGINE_VERSION, mode: ATHENA_ENGINE_MODE, enabled: String(process.env.ATHENA_ENGINE_ENABLED ?? process.env.ATHENA_SHADOW_ENABLED ?? 'true').toLowerCase() !== 'false', publicEnabled: String(process.env.ATHENA_PUBLIC_ENABLED ?? 'true').toLowerCase() !== 'false' },
   predictionWindow: predictionWindow(),
   providers: providerConfiguration(),
   time: new Date().toISOString()
@@ -104,13 +108,26 @@ app.get('/api/v1/predictions', async (req: express.Request, res: express.Respons
   } catch (error) { next(error); }
 });
 
+app.get('/api/v1/gods/:god', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    const god = z.enum(['zeus', 'chronos', 'athena', 'ares']).parse(req.params.god);
+    const query = z.object({ date: z.string().optional() }).parse(req.query);
+    const defaults = predictionWindow();
+    const date = query.date || defaults.from;
+    const dashboard = await getPredictionDashboard(date, date);
+    const map = { zeus: dashboard.zeusAutoPicks, chronos: dashboard.chronosPicks, athena: dashboard.athenaPicks, ares: dashboard.aresPicks };
+    const picks = map[god].filter((pick) => pick.date === date);
+    res.json({ source: dashboard.source, generatedAt: dashboard.generatedAt, god, date, count: picks.length, picks });
+  } catch (error) { next(error); }
+});
+
 app.get('/api/v1/bankers', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   try {
     const query = z.object({ date: z.string().optional() }).parse(req.query);
     const defaults = predictionWindow();
     const date = query.date || defaults.from;
     const dashboard = await getPredictionDashboard(date, date);
-    res.json({ source: dashboard.source, generatedAt: dashboard.generatedAt, date, bankers: dashboard.bankers.slice(0, 3) });
+    res.json({ source: dashboard.source, generatedAt: dashboard.generatedAt, date, bankers: dashboard.zeusAutoPicks.slice(0, 3) });
   } catch (error) { next(error); }
 });
 
@@ -122,8 +139,8 @@ app.get('/api/v1/dashboard', async (_req: express.Request, res: express.Response
     res.json({
       source: sourceName(),
       lastUpdated: new Date().toISOString(),
-      engineVersion: ENGINE_VERSION,
-      athenaTransition: { version: ATHENA_ENGINE_VERSION, mode: ATHENA_ENGINE_MODE, enabled: String(process.env.ATHENA_SHADOW_ENABLED ?? 'true').toLowerCase() !== 'false', publicEnabled: String(process.env.ATHENA_PUBLIC_ENABLED ?? 'true').toLowerCase() !== 'false' },
+      engineVersion: OLYMPIAN_ENGINE_VERSION,
+      athenaTransition: { version: ATHENA_ENGINE_VERSION, mode: ATHENA_ENGINE_MODE, enabled: String(process.env.ATHENA_ENGINE_ENABLED ?? process.env.ATHENA_SHADOW_ENABLED ?? 'true').toLowerCase() !== 'false', publicEnabled: String(process.env.ATHENA_PUBLIC_ENABLED ?? 'true').toLowerCase() !== 'false' },
       metrics: {
         matches: matches.length,
         leagues,
@@ -134,7 +151,10 @@ app.get('/api/v1/dashboard', async (_req: express.Request, res: express.Response
         bankers: predictions.metrics.bankers,
         athenaShadowRuns: predictions.metrics.athenaShadowRuns,
         athenaShadowPicks: predictions.metrics.athenaShadowPicks,
-        athenaShadowBankers: predictions.metrics.athenaShadowBankers
+        athenaShadowBankers: predictions.metrics.athenaShadowBankers,
+        chronosPicks: predictions.metrics.chronosPublicPicks,
+        aresPicks: predictions.metrics.aresPublicPicks,
+        zeusAutoPicks: predictions.metrics.zeusAutoPicks
       },
       recentMatches: matches.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 16),
       oddsBands: bands,
